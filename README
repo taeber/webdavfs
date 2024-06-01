@@ -1,0 +1,21 @@
+FUSE but it's WebDAV in Go
+==========================
+
+Benefits
+--------
+
+ * Truly Userspace (no macOS kernel extension)
+ * Cross-platform (written in Go)
+
+
+TODO
+----
+
+[ ] Retro - DOS3.3 DSK fs - expose both TEXT and BINARY version of files
+[ ] Layering - create a caching fs by having it call an fs with a 200ms delay
+    per op and show performance improvement
+[ ] Media - Photos fs that has directories for People, Places, Years
+    /photos/places/us/fl/Gainesville/IMG_1234.HEIC
+    /photos/2024/05/27/IMG_1234.HEIC
+    /photos/people/Doe_John/IMG_1234.HEIC
+    ^^ all the same file!
