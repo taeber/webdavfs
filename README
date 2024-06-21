@@ -19,3 +19,126 @@ TODO
     /photos/2024/05/27/IMG_1234.HEIC
     /photos/people/Doe_John/IMG_1234.HEIC
     ^^ all the same file!
+
+
+DOS 3.3 DSK Filesystem
+-----------------------
+
+```
+$ go run examples/dos33 DISK.DSK
+Serving DOS 3.3 DSK filesystem over WebDAV
+  Address: http://127.0.0.1:33333/dos33
+
+# Mount to /Volumes/dos33
+$ cd /Volumes/dos33/DISK.DSK
+$ ls -1
+README
+files/
+catalog
+applesoft/
+binary/
+intbasic/
+text/
+a/
+b/
+r/
+s/
+locks/   # Might be unnecessary
+vtoc
+
+$ cat README
+DOS 3.3 DSK Filesystem Folder Structure
+
+files/      Read-only versions of all files, as raw binary
+catalog     a close approximation of running CATLOG from DOS
+locks/      All locked files. Lock a file by adding it; unlock by deleting it.
+
+You can edit and create files by type under these folders:
+  applesoft/
+  intbasic/
+  binary/
+  text/
+  a/
+  b/
+  r/
+  s/
+
+For the following "text" folders, the appropriate conversion takes place:
+ applesoft/
+ intbasic/
+ text/
+
+$ cat catalog
+
+DISK VOLUME 254
+
+ I 002 HELLO
+*I 043 APPLESOFT
+ I 016 ANIMALS
+ I 009 COLOR DEMOS
+*I 004 MASTER.CREATE
+*B 039 RAWDOS
+*I 007 COPY
+*B 007 COPY.OBJ
+
+
+$ ls -1 files/
+HELLO
+APPLESOFT
+ANIMALS
+COLOR DEMOS
+MASTER.CREATE
+RAWDOS
+COPY
+COPY.OBJ
+
+$ ls -1 applesoft/
+
+$ ls -1 intbasic/
+HELLO
+APPLESOFT
+ANIMALS
+COLOR DEMOS
+MASTER.CREATE
+COPY
+
+$ ls -1 locks/
+APPLESOFT
+MASTER.CREATE
+RAWDOS
+COPY
+COPY.OBJ
+
+$ touch locks/HELLO
+$ ls -1 locks/
+HELLO
+APPLESOFT
+MASTER.CREATE
+RAWDOS
+COPY
+COPY.OBJ
+
+$ cat catalog
+
+DISK VOLUME 254
+
+*I 002 HELLO
+*I 043 APPLESOFT
+ I 016 ANIMALS
+ I 009 COLOR DEMOS
+*I 004 MASTER.CREATE
+*B 039 RAWDOS
+*I 007 COPY
+*B 007 COPY.OBJ
+
+$ cat files/HELLO
+...BINARY IN OUTPUT...
+
+$ cat intbasic/HELLO
+10  PRINT "HI"
+20  GOTO 10
+
+$
+
+
+```
