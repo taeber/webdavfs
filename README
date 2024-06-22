@@ -24,17 +24,35 @@ TODO
 DOS 3.3 DSK Filesystem
 -----------------------
 
+## TODO
+
+[ ] Definitely need to implement my own FileSystem, but I should use file.go's
+    memFS for inspiration, especially creating a new memFile per OpenFile req.
+
+[ ] Would be cool to generate index.html on the fly. Not listed, but if asked for. (Or redirected?)
+    [ ] Add WebDAV client in HTML?
+    [ ] Add Chris's TS emulator builtin!
+
+
+
 ```
 $ go run examples/dos33 DISK.DSK
 Serving DOS 3.3 DSK filesystem over WebDAV
   Address: http://127.0.0.1:33333/dos33
 
-# Mount to /Volumes/dos33
+$ ls -l /Volumes/dos33  # WebDAV mounted here
+README
+DISK.DSK/
+
+$ head -3 /Volumes/dos33/README
+DOS 3.3 DSK Filesystem Folder Structure
+
+Each DSK is represented as a folder with the following files and folders.
+
 $ cd /Volumes/dos33/DISK.DSK
 $ ls -1
-README
 files/
-catalog
+CATALOG
 applesoft/
 binary/
 intbasic/
@@ -44,31 +62,9 @@ b/
 r/
 s/
 locks/   # Might be unnecessary
-vtoc
+VTOC
 
-$ cat README
-DOS 3.3 DSK Filesystem Folder Structure
-
-files/      Read-only versions of all files, as raw binary
-catalog     a close approximation of running CATLOG from DOS
-locks/      All locked files. Lock a file by adding it; unlock by deleting it.
-
-You can edit and create files by type under these folders:
-  applesoft/
-  intbasic/
-  binary/
-  text/
-  a/
-  b/
-  r/
-  s/
-
-For the following "text" folders, the appropriate conversion takes place:
- applesoft/
- intbasic/
- text/
-
-$ cat catalog
+$ cat CATALOG
 
 DISK VOLUME 254
 
@@ -102,6 +98,14 @@ COLOR DEMOS
 MASTER.CREATE
 COPY
 
+$ hexdump -C files/HELLO | head -2  # files/ contains raw binary
+00000000  01 a5 27 c9 09 d0 18 a5  2b 4a 4a 4a 4a 09 c0 85  |..'.....+JJJJ...|
+00000010  3f a9 5c 85 3e 18 ad fe  08 6d ff 08 8d fe 08 ae  |?.\.>....m......|
+
+$ cat intbasic/HELLO
+10  PRINT "HI"
+20  GOTO 10
+
 $ ls -1 locks/
 APPLESOFT
 MASTER.CREATE
@@ -118,7 +122,7 @@ RAWDOS
 COPY
 COPY.OBJ
 
-$ cat catalog
+$ cat CATALOG
 
 DISK VOLUME 254
 
@@ -130,15 +134,5 @@ DISK VOLUME 254
 *B 039 RAWDOS
 *I 007 COPY
 *B 007 COPY.OBJ
-
-$ cat files/HELLO
-...BINARY IN OUTPUT...
-
-$ cat intbasic/HELLO
-10  PRINT "HI"
-20  GOTO 10
-
-$
-
 
 ```
