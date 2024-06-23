@@ -22,97 +22,86 @@ import (
 /// dos33FS
 
 type dos33FS struct {
-	disks []*diskette
+	created time.Time
+	disks   []*diskette
 }
 
 var (
 	// Directories under each DSK folder.
-	dskDirs = words("files applesoft binary intbasic text a b r s locks")
+	dskDirs = w("files applesoft binary intbasic text a b r s locks")
 	// Files under each DSK folder.
-	dskFiles = words("CATALOG VTOC")
+	dskFiles = w("CATALOG VTOC")
 )
 
-func (*dos33FS) Mkdir(ctx context.Context, name string, perm fs.FileMode) error {
-	return errors.ErrUnsupported
-}
-
 func (fs *dos33FS) OpenFile(ctx context.Context, name string, flag int, perm fs.FileMode) (webdav.File, error) {
-	parts := pathparts(name)
-	switch len(parts) {
-	case 0:
+	req := fs.parsePath(name)
+
+	if req.IsRoot() {
 		return rootDirectory(fs), nil
+	}
 
-	case 1:
-		if parts[0] == "README" {
-			return newMemFile("README", readme), nil
-		}
+	if req.IsReadme() {
+		f := newMemFile("README", readme)
+		f.modTime = fs.created
+		return f, nil
+	}
 
-		dsk := fs.find(parts[0])
-		if dsk == nil {
-			break
-		}
+	if dsk := req.DiskRoot(); dsk != nil {
 		return diskDirectory(dsk), nil
+	}
 
-	case 2:
-		dsk := fs.find(parts[0])
-		if dsk == nil {
-			break
-		}
-		if slices.Contains(dskDirs, parts[1]) {
-			return &directory{fileInfo: *dirInfo(parts[1])}, nil
-		}
-		if slices.Contains(dskFiles, parts[1]) {
-			return newMemFile(parts[1], "TODO: implement"), nil
-		}
+	if dsk, folder := req.DiskDir(); dsk != nil {
+		dfi := dirInfo(folder)
+		dfi.modTime = dsk.ModTime()
+		return &directory{fileInfo: *dfi}, nil
+	}
+
+	if dsk, name := req.DiskSpecial(); dsk != nil {
+		f := newMemFile(name, "TODO: implement")
+		f.modTime = dsk.ModTime()
+		return f, nil
 	}
 
 	return nil, http.ErrMissingFile
-}
-
-func (fs *dos33FS) RemoveAll(ctx context.Context, name string) error {
-	return errors.ErrUnsupported
-}
-
-func (fs *dos33FS) Rename(ctx context.Context, oldName, newName string) error {
-	return errors.ErrUnsupported
 }
 
 func (fs *dos33FS) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
-	parts := pathparts(name)
-	switch len(parts) {
-	case 0:
+	req := fs.parsePath(name)
+
+	if req.IsRoot() {
 		return dirInfo("/"), nil
+	}
 
-	case 1:
-		if parts[0] == "README" {
-			return file(parts[0]), nil
-		}
+	if req.IsReadme() {
+		f := file("README")
+		f.(*fileInfo).modTime = fs.created
+		return f, nil
+	}
 
-		dsk := fs.find(parts[0])
-		if dsk == nil {
-			break
-		}
+	if dsk := req.DiskRoot(); dsk != nil {
 		dfi := dirInfo(dsk.name)
-		if fi, err := dsk.file.Stat(); err == nil {
-			dfi.modTime = fi.ModTime()
-		}
+		dfi.modTime = dsk.ModTime()
 		return dfi, nil
+	}
 
-	case 2:
-		dsk := fs.find(parts[0])
-		if dsk == nil {
-			break
-		}
-		if slices.Contains(dskDirs, parts[1]) {
-			return dirInfo(parts[1]), nil
-		}
-		if slices.Contains(dskFiles, parts[1]) {
-			return file(parts[1]), nil
-		}
+	if dsk, folder := req.DiskDir(); dsk != nil {
+		dfi := dirInfo(folder)
+		dfi.modTime = dsk.ModTime()
+		return dfi, nil
+	}
+
+	if dsk, name := req.DiskSpecial(); dsk != nil {
+		f := file(name)
+		f.(*fileInfo).modTime = dsk.ModTime()
+		return f, nil
 	}
 
 	return nil, http.ErrMissingFile
 }
+
+func (*dos33FS) Mkdir(_ context.Context, _ string, _ fs.FileMode) error { return errors.ErrUnsupported }
+func (fs *dos33FS) RemoveAll(_ context.Context, _ string) error         { return errors.ErrUnsupported }
+func (fs *dos33FS) Rename(_ context.Context, _ string, _ string) error  { return errors.ErrUnsupported }
 
 func (fs *dos33FS) find(name string) *diskette {
 	for _, dsk := range fs.disks {
@@ -123,9 +112,52 @@ func (fs *dos33FS) find(name string) *diskette {
 	return nil
 }
 
+func (fs *dos33FS) parsePath(path string) (p fspath) {
+	for _, part := range strings.Split(path, "/") {
+		if part != "" {
+			p.parts = append(p.parts, part)
+		}
+	}
+	p.fs = fs
+	return
+}
+
+type fspath struct {
+	fs    *dos33FS
+	parts []string
+}
+
+func (p fspath) IsRoot() bool   { return len(p.parts) == 0 }
+func (p fspath) IsReadme() bool { return len(p.parts) == 1 && p.parts[0] == "README" }
+func (p fspath) DiskRoot() *diskette {
+	if len(p.parts) == 1 {
+		return p.uncheckedFind()
+	}
+	return nil
+}
+func (p fspath) DiskDir() (*diskette, string) {
+	if len(p.parts) == 2 && dskDirs.Contains(p.parts[1]) {
+		if dsk := p.uncheckedFind(); dsk != nil {
+			return dsk, p.parts[1]
+		}
+	}
+	return nil, ""
+}
+func (p fspath) DiskSpecial() (*diskette, string) {
+	if len(p.parts) == 2 && dskFiles.Contains(p.parts[1]) {
+		if dsk := p.uncheckedFind(); dsk != nil {
+			return dsk, p.parts[1]
+		}
+	}
+	return nil, ""
+}
+func (p fspath) uncheckedFind() *diskette { return p.fs.find(p.parts[0]) }
+
 // NewFileSystem returns a new DOS 3.3 DSK Filesystem.
 func NewFileSystem(disks ...string) webdav.FileSystem {
-	fs := dos33FS{}
+	fs := &dos33FS{
+		created: time.Now(),
+	}
 	for _, name := range disks {
 		dsk, err := loadDiskette(name)
 		if err != nil {
@@ -134,27 +166,31 @@ func NewFileSystem(disks ...string) webdav.FileSystem {
 		}
 		fs.disks = append(fs.disks, &dsk)
 	}
-	return &fs
+	return fs
 }
 
-func rootDirectory(filesys *dos33FS) *directory {
-	return &directory{
+func rootDirectory(fs *dos33FS) *directory {
+	dir := &directory{
 		fileInfo: *dirInfo("/"),
 		children: slices.Concat(
-			dirs(transform(filesys.disks, diskName)...),
+			dirs(transform(fs.disks, diskName)...),
 			files("README"),
 		),
 	}
+	dir.modTime = fs.created
+	return dir
 }
 
 func diskDirectory(dsk *diskette) *directory {
-	return &directory{
+	dir := &directory{
 		fileInfo: *dirInfo(dsk.name),
 		children: slices.Concat(
 			dirs(dskDirs...),
 			files(dskFiles...),
 		),
 	}
+	dir.fileInfo.modTime = dsk.ModTime()
+	return dir
 }
 
 /// directory
@@ -213,6 +249,13 @@ type diskette struct {
 	name     string
 	file     *os.File
 	readonly bool
+}
+
+func (d *diskette) ModTime() (modtime time.Time) {
+	if stat, err := d.file.Stat(); err == nil {
+		modtime = stat.ModTime()
+	}
+	return
 }
 
 func loadDiskette(path string) (dsk diskette, err error) {
@@ -283,18 +326,6 @@ For the following "text" folders, the appropriate conversion takes place:
   text/
 `
 
-func pathparts(name string) []string {
-	if name == "" || name[0] != '/' {
-		name = "/" + name
-	}
-	parts := strings.Split(name, "/")
-	if parts[len(parts)-1] == "" {
-		return parts[1 : len(parts)-1]
-	} else {
-		return parts[1:]
-	}
-}
-
 // transform maps items from type T to result type R using fn.
 func transform[T, R any](items []T, fn func(T) R) []R {
 	mapped := make([]R, 0, len(items))
@@ -304,7 +335,11 @@ func transform[T, R any](items []T, fn func(T) R) []R {
 	return mapped
 }
 
-func words(s string) []string { return strings.Split(s, " ") }
+// words is an alias for a string-slice.
+type words []string
+
+func w(s string) words                 { return strings.Split(s, " ") }
+func (w words) Contains(s string) bool { return slices.Contains(w, s) }
 
 /// main
 
