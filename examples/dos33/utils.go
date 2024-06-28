@@ -28,13 +28,15 @@ func tryOpenFileRW(path string) (file *os.File, err error, readonly bool) {
 	return
 }
 
-// uint16be interprets bytes as a big-endian, unsigned, 16-bit integer.
-func uint16be(bytes []byte) uint16 {
-	return binary.BigEndian.Uint16(bytes)
+// word interprets bytes as a little-endian, 16-bit, unsigned integer.
+// This is the representation of the MOS 6502.
+func word(bytes []byte) uint16 {
+	return binary.LittleEndian.Uint16(bytes)
 }
 
-// words is an alias for a string-slice.
-type words []string
+/// stringSlice
 
-func w(s string) words                 { return strings.Split(s, " ") }
-func (w words) Contains(s string) bool { return slices.Contains(w, s) }
+type stringSlice []string
+
+func w(s string) stringSlice                 { return strings.Split(s, " ") }
+func (w stringSlice) Contains(s string) bool { return slices.Contains(w, s) }

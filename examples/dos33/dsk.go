@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+type sector [256]byte
+
 type diskette struct {
 	path     string // Path on host
 	name     string
@@ -25,8 +27,28 @@ func (dsk *diskette) ModTime() (modtime time.Time) {
 	return
 }
 
+func loadDiskette(path string) (dsk diskette, err error) {
+	dsk.path = path
+	dsk.name = filepath.Base(path)
+	dsk.file, err, dsk.readonly = tryOpenFileRW(path)
+	if err != nil {
+		return
+	}
+
+	var fi fs.FileInfo
+	fi, err = dsk.file.Stat()
+	dsk.size = fi.Size()
+	// fmt.Println("DSK", dsk.size, dsk.vtoc)
+
+	return
+}
+
+func diskName(dsk *diskette) string { return dsk.name }
+
+/// VTOC
+
 func (dsk *diskette) VTOCFile() (*memFile, error) {
-	var vtoc [0x39]byte
+	var vtoc sector
 	n, err := dsk.file.ReadAt(vtoc[:], int64(vtocOffset(dsk.size)))
 	if err != nil {
 		return nil, err
@@ -47,10 +69,56 @@ func (dsk *diskette) VTOCFile() (*memFile, error) {
 	sb.WriteString(fmt.Sprintf("  Direction of track allocation(+1 or -1)  %+3d  $%.2X\n", int8(vtoc[0x31]), vtoc[0x31]))
 	sb.WriteString(fmt.Sprintf("  Tracks per diskette (normally 35)        %3d  $%.2X\n", vtoc[0x34], vtoc[0x34]))
 	sb.WriteString(fmt.Sprintf("  Sectors per track (13 or 16)             %3d  $%.2X\n", vtoc[0x35], vtoc[0x35]))
-	sb.WriteString(fmt.Sprintf("  Bytes per sector                         %5d  $%.2X%.2X\n", uint16be(vtoc[0x36:0x38]), vtoc[0x37], vtoc[0x36]))
+	sb.WriteString(fmt.Sprintf("  Bytes per sector                       %5d  $%.2X%.2X\n", word(vtoc[0x36:0x38]), vtoc[0x37], vtoc[0x36]))
 	sb.WriteString("\n")
 	sb.WriteString("  Track  Sector (X = used, . = free)\n")
 	sb.WriteString("        ")
+
+	// Free Sectors
+	//
+	// Track   Sector (X = used, . = free)
+	//         0 1 2 3 4 5 6 7 8 9 A B C D E F
+	//  0 $00  X . . X X X X . . . . . . X X X
+	//  1 $01
+	// ...
+	// 34 $22
+	// where 34 is vtoc[(Tracks per diskette)]-1
+	// and cols D,E, and F are only used if vtoc[(Sectors per track)] == 16
+	cols := int(uint8(vtoc[0x35]))
+	if cols > 16 {
+		cols = 16
+	}
+
+	for i := 0; i < cols; i++ {
+		sb.WriteString(fmt.Sprintf(" %X", i))
+		if i == 7 {
+			sb.WriteRune(' ')
+		}
+	}
+	sb.WriteRune('\n')
+
+	bitmap := 0x38
+	rows := int(vtoc[0x34])
+	for r := 0; r < rows; r++ {
+		sb.WriteString(fmt.Sprintf(" %2d $%.2X ", r, r))
+		for c := 0; c < 8; c++ {
+			if free := vtoc[bitmap+1] & (0x1 << c); free != 0 {
+				sb.WriteString(" .")
+			} else {
+				sb.WriteString(" X")
+			}
+		}
+		sb.WriteRune(' ')
+		for c := 0; c < cols-8; c++ {
+			if free := vtoc[bitmap+0] & (0x1 << c); free != 0 {
+				sb.WriteString(" .")
+			} else {
+				sb.WriteString(" X")
+			}
+		}
+		sb.WriteRune('\n')
+		bitmap += 4
+	}
 
 	file := newMemFile(dsk.name, sb.String())
 	file.modTime = dsk.ModTime()
@@ -75,21 +143,3 @@ func vtocOffset(size int64) uint {
 
 	return DSK_VTOC
 }
-
-func loadDiskette(path string) (dsk diskette, err error) {
-	dsk.path = path
-	dsk.name = filepath.Base(path)
-	dsk.file, err, dsk.readonly = tryOpenFileRW(path)
-	if err != nil {
-		return
-	}
-
-	var fi fs.FileInfo
-	fi, err = dsk.file.Stat()
-	dsk.size = fi.Size()
-	// fmt.Println("DSK", dsk.size, dsk.vtoc)
-
-	return
-}
-
-func diskName(dsk *diskette) string { return dsk.name }

@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -29,7 +28,7 @@ func main() {
 	flag.Parse()
 
 	if flag.NArg() < 1 {
-		log.Println("No DSK files provided.")
+		fmt.Fprintln(os.Stderr, "No DSK files provided.")
 		flag.Usage()
 		os.Exit(2)
 	}

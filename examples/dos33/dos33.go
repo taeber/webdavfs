@@ -16,6 +16,8 @@ import (
 	"golang.org/x/net/webdav"
 )
 
+// ListenAndServe starts a new WebDAV server at http://{addr}{prefix} with each
+// of the disks exposing the DOS 3.3 DSK filesystem.
 func ListenAndServe(addr, prefix string, disks ...string) error {
 	loc := fmt.Sprintf("http://%s%s", addr, prefix)
 	uri, err := url.Parse(loc)
@@ -23,15 +25,21 @@ func ListenAndServe(addr, prefix string, disks ...string) error {
 		log.Fatalln(err)
 	}
 
+	dosfs := newFileSystem(disks...)
+
 	handler := webdav.Handler{
 		Prefix:     prefix,
 		LockSystem: webdav.NewMemLS(),
-		FileSystem: newFileSystem(disks...),
+		FileSystem: dosfs,
 		Logger:     func(r *http.Request, e error) { log.Println(r.Method, r.URL.Path, e) },
 	}
 
 	log.Println("Serving DOS3.3 DSK filesystem over WebDAV")
 	log.Println(" Address:", uri)
+	for _, dsk := range dosfs.disks {
+		log.Printf("          %s/%s/\n", uri, url.PathEscape(diskName(dsk)))
+	}
+
 	return http.ListenAndServe(addr, &handler)
 }
 
@@ -176,7 +184,7 @@ func (p fspath) DiskSpecial() (*diskette, string) {
 func (p fspath) uncheckedFind() *diskette { return p.fs.find(p.parts[0]) }
 
 // newFileSystem returns a new DOS 3.3 DSK Filesystem.
-func newFileSystem(disks ...string) webdav.FileSystem {
+func newFileSystem(disks ...string) *dos33FS {
 	fs := &dos33FS{
 		created: time.Now(),
 	}
@@ -298,7 +306,7 @@ Each DSK is represented as a folder with the following files and folders.
   files/      Read-only versions of all files, as raw binary.
   CATALOG     a close approximation of running CATLOG from DOS.
   locks/      All locked files. Lock a file by adding it, unlock by deleting it.
-	VTOC        Volume Table of Contents information that might be helpful.
+  VTOC        Volume Table of Contents information that might be helpful.
 
 You can edit and create files by type under these folders:
   applesoft/
