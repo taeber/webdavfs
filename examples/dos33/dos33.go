@@ -1,23 +1,39 @@
-package main
+package dos33
 
 import (
 	"bytes"
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"golang.org/x/net/webdav"
 )
+
+func ListenAndServe(addr, prefix string, disks ...string) error {
+	loc := fmt.Sprintf("http://%s%s", addr, prefix)
+	uri, err := url.Parse(loc)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	handler := webdav.Handler{
+		Prefix:     prefix,
+		LockSystem: webdav.NewMemLS(),
+		FileSystem: newFileSystem(disks...),
+		Logger:     func(r *http.Request, e error) { log.Println(r.Method, r.URL.Path, e) },
+	}
+
+	log.Println("Serving DOS3.3 DSK filesystem over WebDAV")
+	log.Println(" Address:", uri)
+	return http.ListenAndServe(addr, &handler)
+}
 
 /// dos33FS
 
@@ -51,15 +67,21 @@ func (fs *dos33FS) OpenFile(ctx context.Context, name string, flag int, perm fs.
 	}
 
 	if dsk, folder := req.DiskDir(); dsk != nil {
-		dfi := dirInfo(folder)
+		dfi := newDirInfo(folder)
 		dfi.modTime = dsk.ModTime()
 		return &directory{fileInfo: *dfi}, nil
 	}
 
 	if dsk, name := req.DiskSpecial(); dsk != nil {
-		f := newMemFile(name, "TODO: implement")
-		f.modTime = dsk.ModTime()
-		return f, nil
+		switch name {
+		case "CATALOG":
+			file := newMemFile(name, "TODO: implement")
+			file.modTime = dsk.ModTime()
+			return file, nil
+		case "VTOC":
+			return dsk.VTOCFile()
+		}
+		panic("Logic error: unknown special file: " + name)
 	}
 
 	return nil, http.ErrMissingFile
@@ -69,29 +91,29 @@ func (fs *dos33FS) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
 	req := fs.parsePath(name)
 
 	if req.IsRoot() {
-		return dirInfo("/"), nil
+		return newDirInfo("/"), nil
 	}
 
 	if req.IsReadme() {
-		f := file("README")
+		f := newFileInfo("README")
 		f.(*fileInfo).modTime = fs.created
 		return f, nil
 	}
 
 	if dsk := req.DiskRoot(); dsk != nil {
-		dfi := dirInfo(dsk.name)
+		dfi := newDirInfo(dsk.name)
 		dfi.modTime = dsk.ModTime()
 		return dfi, nil
 	}
 
 	if dsk, folder := req.DiskDir(); dsk != nil {
-		dfi := dirInfo(folder)
+		dfi := newDirInfo(folder)
 		dfi.modTime = dsk.ModTime()
 		return dfi, nil
 	}
 
 	if dsk, name := req.DiskSpecial(); dsk != nil {
-		f := file(name)
+		f := newFileInfo(name)
 		f.(*fileInfo).modTime = dsk.ModTime()
 		return f, nil
 	}
@@ -153,8 +175,8 @@ func (p fspath) DiskSpecial() (*diskette, string) {
 }
 func (p fspath) uncheckedFind() *diskette { return p.fs.find(p.parts[0]) }
 
-// NewFileSystem returns a new DOS 3.3 DSK Filesystem.
-func NewFileSystem(disks ...string) webdav.FileSystem {
+// newFileSystem returns a new DOS 3.3 DSK Filesystem.
+func newFileSystem(disks ...string) webdav.FileSystem {
 	fs := &dos33FS{
 		created: time.Now(),
 	}
@@ -171,7 +193,7 @@ func NewFileSystem(disks ...string) webdav.FileSystem {
 
 func rootDirectory(fs *dos33FS) *directory {
 	dir := &directory{
-		fileInfo: *dirInfo("/"),
+		fileInfo: *newDirInfo("/"),
 		children: slices.Concat(
 			dirs(transform(fs.disks, diskName)...),
 			files("README"),
@@ -183,7 +205,7 @@ func rootDirectory(fs *dos33FS) *directory {
 
 func diskDirectory(dsk *diskette) *directory {
 	dir := &directory{
-		fileInfo: *dirInfo(dsk.name),
+		fileInfo: *newDirInfo(dsk.name),
 		children: slices.Concat(
 			dirs(dskDirs...),
 			files(dskFiles...),
@@ -230,49 +252,17 @@ func (info *fileInfo) ModTime() time.Time { return info.modTime }
 func (info *fileInfo) Sys() any           { return info.sys }
 func (info *fileInfo) Size() int64        { return info.size }
 
-func file(name string) fs.FileInfo        { return &fileInfo{name: name, mode: 0444} }
-func files(names ...string) []fs.FileInfo { return transform(names, file) }
+func newFileInfo(name string) fs.FileInfo { return &fileInfo{name: name, mode: 0444} }
+func files(names ...string) []fs.FileInfo { return transform(names, newFileInfo) }
 func dirs(names ...string) []fs.FileInfo  { return transform(names, dir) }
-func dir(name string) fs.FileInfo         { return dirInfo(name) }
-func dirInfo(name string) *fileInfo {
+func dir(name string) fs.FileInfo         { return newDirInfo(name) }
+func newDirInfo(name string) *fileInfo {
 	return &fileInfo{
 		name:  name,
 		isDir: true,
 		mode:  fs.ModeDir | fs.ModePerm,
 	}
 }
-
-/// diskette
-
-type diskette struct {
-	path     string // Path on host
-	name     string
-	file     *os.File
-	readonly bool
-}
-
-func (d *diskette) ModTime() (modtime time.Time) {
-	if stat, err := d.file.Stat(); err == nil {
-		modtime = stat.ModTime()
-	}
-	return
-}
-
-func loadDiskette(path string) (dsk diskette, err error) {
-	dsk.path = path
-	dsk.name = filepath.Base(path)
-	dsk.file, err = os.OpenFile(path, os.O_RDWR, os.FileMode(0))
-	if err == nil {
-		return
-	}
-	if errors.Is(err, os.ErrPermission) {
-		dsk.file, err = os.OpenFile(path, os.O_RDONLY, os.FileMode(0))
-		dsk.readonly = true
-	}
-	return
-}
-
-func diskName(dsk *diskette) string { return dsk.name }
 
 /// memFile
 
@@ -325,64 +315,3 @@ For the following "text" folders, the appropriate conversion takes place:
   intbasic/
   text/
 `
-
-// transform maps items from type T to result type R using fn.
-func transform[T, R any](items []T, fn func(T) R) []R {
-	mapped := make([]R, 0, len(items))
-	for _, item := range items {
-		mapped = append(mapped, fn(item))
-	}
-	return mapped
-}
-
-// words is an alias for a string-slice.
-type words []string
-
-func w(s string) words                 { return strings.Split(s, " ") }
-func (w words) Contains(s string) bool { return slices.Contains(w, s) }
-
-/// main
-
-func main() {
-	addr := flag.String("addr", "127.0.0.1:33333", "HTTP address on which to listen")
-	prefix := flag.String("prefix", "/dos33", "URL path prefix")
-	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "dos33 is a WebDAV-based filesystem for Apple DOS 3.3 DSKs.")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "usage: dos33 [-addr ADDR] [-prefix PREFIX] DSK...")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "DSK is one or more files for the WebDAV server to expose.")
-		fmt.Fprintln(os.Stderr)
-		for _, name := range []string{"addr", "prefix"} {
-			f := flag.Lookup(name)
-			fmt.Fprintf(os.Stderr, "-%s %s\n", f.Name, strings.ToUpper(f.Name))
-			fmt.Fprintf(os.Stderr, "  %s (default \"%s\")\n", f.Usage, f.DefValue)
-		}
-	}
-	flag.Parse()
-
-	if flag.NArg() < 1 {
-		log.Println("No DSK files provided.")
-		flag.Usage()
-		os.Exit(2)
-	}
-
-	disks := flag.Args()
-
-	loc := fmt.Sprintf("http://%s%s", *addr, *prefix)
-	uri, err := url.Parse(loc)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	handler := webdav.Handler{
-		Prefix:     *prefix,
-		LockSystem: webdav.NewMemLS(),
-		FileSystem: NewFileSystem(disks...),
-		Logger:     func(r *http.Request, e error) { log.Println(r.Method, r.URL.Path, e) },
-	}
-
-	log.Println("Serving DOS3.3 DSK filesystem over WebDAV")
-	log.Println(" Address:", uri)
-	http.ListenAndServe(*addr, &handler)
-}

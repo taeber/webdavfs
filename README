@@ -26,9 +26,10 @@ DOS 3.3 DSK Filesystem
 
 ## TODO
 
-[ ] Definitely need to implement my own FileSystem, but I should use file.go's
+[x] Definitely need to implement my own FileSystem, but I should use file.go's
     memFS for inspiration, especially creating a new memFile per OpenFile req.
-
+[ ] VTOC
+[ ] CATALOG
 [ ] Would be cool to generate index.html on the fly. Not listed, but if asked for. (Or redirected?)
     [ ] Add WebDAV client in HTML?
     [ ] Add Chris's TS emulator builtin!

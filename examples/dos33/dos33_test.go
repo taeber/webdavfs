@@ -1,4 +1,4 @@
-package main
+package dos33
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestListRoot(t *testing.T) {
-	fs := NewFileSystem("DISK.DSK")
+	fs := newFileSystem("DISK.DSK")
 
 	file, err := fs.OpenFile(context.Background(), "/", 0, os.ModePerm)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestListRoot(t *testing.T) {
 }
 
 func TestListDisk(t *testing.T) {
-	fs := NewFileSystem("DISK.DSK")
+	fs := newFileSystem("DISK.DSK")
 
 	file, err := fs.OpenFile(context.Background(), "/DISK.DSK", 0, os.ModePerm)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestListDisk(t *testing.T) {
 }
 
 func TestBadDiskName_ThrowsMissing(t *testing.T) {
-	fs := NewFileSystem()
+	fs := newFileSystem()
 
 	_, err := fs.OpenFile(context.Background(), "/missing.dsk", 0, os.ModePerm)
 	if !errors.Is(err, http.ErrMissingFile) {
@@ -64,7 +64,7 @@ func TestBadDiskName_ThrowsMissing(t *testing.T) {
 }
 
 func TestDiskHasModTime(t *testing.T) {
-	fs := NewFileSystem("DISK.DSK")
+	fs := newFileSystem("DISK.DSK")
 
 	info, err := fs.Stat(context.Background(), "/DISK.DSK")
 	if err != nil {
@@ -78,7 +78,7 @@ func TestDiskHasModTime(t *testing.T) {
 }
 
 func TestReadmeIsNotEmpty(t *testing.T) {
-	fs := NewFileSystem()
+	fs := newFileSystem()
 
 	file, err := fs.OpenFile(context.Background(), "/README", 0, os.ModePerm)
 	if err != nil {
