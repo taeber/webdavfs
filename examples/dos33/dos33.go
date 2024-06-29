@@ -65,9 +65,7 @@ func (fs *dos33FS) OpenFile(ctx context.Context, name string, flag int, perm fs.
 	}
 
 	if req.IsReadme() {
-		f := newMemFile("README", readme)
-		f.modTime = fs.created
-		return f, nil
+		return newMemFile("README", readme, fs.created), nil
 	}
 
 	if dsk := req.DiskRoot(); dsk != nil {
@@ -75,17 +73,13 @@ func (fs *dos33FS) OpenFile(ctx context.Context, name string, flag int, perm fs.
 	}
 
 	if dsk, folder := req.DiskDir(); dsk != nil {
-		dfi := newDirInfo(folder)
-		dfi.modTime = dsk.ModTime()
-		return &directory{fileInfo: *dfi}, nil
+		return &directory{fileInfo: *newDirInfo(folder, dsk.ModTime())}, nil
 	}
 
 	if dsk, name := req.DiskSpecial(); dsk != nil {
 		switch name {
 		case "CATALOG":
-			file := newMemFile(name, "TODO: implement")
-			file.modTime = dsk.ModTime()
-			return file, nil
+			return newMemFile(name, "TODO: implement", dsk.ModTime()), nil
 		case "VTOC":
 			return dsk.VTOCFile()
 		}
@@ -99,31 +93,23 @@ func (fs *dos33FS) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
 	req := fs.parsePath(name)
 
 	if req.IsRoot() {
-		return newDirInfo("/"), nil
+		return newDirInfo("/", fs.created), nil
 	}
 
 	if req.IsReadme() {
-		f := newFileInfo("README")
-		f.(*fileInfo).modTime = fs.created
-		return f, nil
+		return newFileInfo("README", fs.created), nil
 	}
 
 	if dsk := req.DiskRoot(); dsk != nil {
-		dfi := newDirInfo(dsk.name)
-		dfi.modTime = dsk.ModTime()
-		return dfi, nil
+		return newDirInfo(dsk.name, dsk.ModTime()), nil
 	}
 
 	if dsk, folder := req.DiskDir(); dsk != nil {
-		dfi := newDirInfo(folder)
-		dfi.modTime = dsk.ModTime()
-		return dfi, nil
+		return newDirInfo(folder, dsk.ModTime()), nil
 	}
 
 	if dsk, name := req.DiskSpecial(); dsk != nil {
-		f := newFileInfo(name)
-		f.(*fileInfo).modTime = dsk.ModTime()
-		return f, nil
+		return newFileInfo(name, dsk.ModTime()), nil
 	}
 
 	return nil, http.ErrMissingFile
@@ -200,27 +186,23 @@ func newFileSystem(disks ...string) *dos33FS {
 }
 
 func rootDirectory(fs *dos33FS) *directory {
-	dir := &directory{
-		fileInfo: *newDirInfo("/"),
+	return &directory{
+		fileInfo: *newDirInfo("/", fs.created),
 		children: slices.Concat(
 			dirs(transform(fs.disks, diskName)...),
 			files("README"),
 		),
 	}
-	dir.modTime = fs.created
-	return dir
 }
 
 func diskDirectory(dsk *diskette) *directory {
-	dir := &directory{
-		fileInfo: *newDirInfo(dsk.name),
+	return &directory{
+		fileInfo: *newDirInfo(dsk.name, dsk.ModTime()),
 		children: slices.Concat(
 			dirs(dskDirs...),
 			files(dskFiles...),
 		),
 	}
-	dir.fileInfo.modTime = dsk.ModTime()
-	return dir
 }
 
 /// directory
@@ -260,15 +242,28 @@ func (info *fileInfo) ModTime() time.Time { return info.modTime }
 func (info *fileInfo) Sys() any           { return info.sys }
 func (info *fileInfo) Size() int64        { return info.size }
 
-func newFileInfo(name string) fs.FileInfo { return &fileInfo{name: name, mode: 0444} }
-func files(names ...string) []fs.FileInfo { return transform(names, newFileInfo) }
-func dirs(names ...string) []fs.FileInfo  { return transform(names, dir) }
-func dir(name string) fs.FileInfo         { return newDirInfo(name) }
-func newDirInfo(name string) *fileInfo {
+func dirs(names ...string) []fs.FileInfo {
+	return transform(names, func(name string) fs.FileInfo { return newDirInfo(name, time.Time{}) })
+}
+
+func files(names ...string) (infos []fs.FileInfo) {
+	return transform(names, func(name string) fs.FileInfo { return newFileInfo(name, time.Time{}) })
+}
+
+func newDirInfo(name string, modTime time.Time) *fileInfo {
 	return &fileInfo{
-		name:  name,
-		isDir: true,
-		mode:  fs.ModeDir | fs.ModePerm,
+		name:    name,
+		mode:    fs.ModeDir | fs.ModePerm,
+		modTime: modTime,
+		isDir:   true,
+	}
+}
+
+func newFileInfo(name string, modTime time.Time) *fileInfo {
+	return &fileInfo{
+		name:    name,
+		mode:    0444,
+		modTime: modTime,
 	}
 }
 
@@ -289,11 +284,12 @@ func (file *memFile) Seek(offset int64, whence int) (int64, error) {
 	return file.content.Seek(offset, whence)
 }
 
-func newMemFile(name, content string) *memFile {
+func newMemFile(name, content string, modTime time.Time) *memFile {
 	return &memFile{
 		fileInfo: fileInfo{
-			name: name,
-			mode: 0444,
+			name:    name,
+			mode:    0444,
+			modTime: modTime,
 		},
 		content: bytes.NewReader([]byte(content)),
 	}

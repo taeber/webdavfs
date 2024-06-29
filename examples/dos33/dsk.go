@@ -120,9 +120,7 @@ func (dsk *diskette) VTOCFile() (*memFile, error) {
 		bitmap += 4
 	}
 
-	file := newMemFile(dsk.name, sb.String())
-	file.modTime = dsk.ModTime()
-	return file, nil
+	return newMemFile(dsk.name, sb.String(), dsk.ModTime()), nil
 }
 
 func vtocOffset(size int64) uint {
