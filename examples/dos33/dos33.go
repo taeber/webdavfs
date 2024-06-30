@@ -79,7 +79,7 @@ func (fs *dos33FS) OpenFile(ctx context.Context, name string, flag int, perm fs.
 	if dsk, name := req.DiskSpecial(); dsk != nil {
 		switch name {
 		case "CATALOG":
-			return newMemFile(name, "TODO: implement", dsk.ModTime()), nil
+			return dsk.CATALOGFile()
 		case "VTOC":
 			return dsk.VTOCFile()
 		}
@@ -180,7 +180,7 @@ func newFileSystem(disks ...string) *dos33FS {
 			log.Fatalln("Could not load diskette:", name, err)
 			continue
 		}
-		fs.disks = append(fs.disks, &dsk)
+		fs.disks = append(fs.disks, dsk)
 	}
 	return fs
 }
