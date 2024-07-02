@@ -221,7 +221,15 @@ func (dsk *diskette) CATALOGFile() (*memFile, error) {
 	sb.WriteString(fmt.Sprintf("\nDISK VOLUME %d\n\n", dsk.Volume()))
 
 	dsk.Catalog(func(file fileEntry) bool {
-		sb.WriteString(fmt.Sprintf(" *%s\n", file.Name()))
+		lock := ' '
+		if file.IsLocked() {
+			lock = '*'
+		}
+		sb.WriteString(fmt.Sprintf("%c%c %03d ",
+			lock,
+			file.Type().String()[0],
+			file.SectorsUsed()))
+		sb.WriteString(fmt.Sprintln(file.Name()))
 		return true
 	})
 
@@ -230,6 +238,8 @@ func (dsk *diskette) CATALOGFile() (*memFile, error) {
 	return newMemFile("CATALOG", sb.String(), dsk.modTime), nil
 }
 
+// Catalog iterates over every file on disk and applies callback, stopping
+// iteration when callback returns false.
 func (dsk *diskette) Catalog(callback func(fileEntry) bool) {
 	const (
 		offsetNextTrack  uint = 0x01
@@ -294,7 +304,8 @@ type fileEntry []byte
 
 func (f fileEntry) IsEmpty() bool   { return f[0x00] == 0x00 }
 func (f fileEntry) IsDeleted() bool { return f[0x00] == 0xff }
-func (f fileEntry) IsLocked() bool  { return f[0x02]&0x80 == 0 }
+func (f fileEntry) IsLocked() bool  { return f[0x02]&0x80 != 0 }
+func (f fileEntry) Type() fileType  { return fileType(f[0x02] & 0x7f) }
 func (f fileEntry) Name() string {
 	size := 30
 	if f.IsDeleted() {
@@ -309,6 +320,42 @@ func (f fileEntry) Name() string {
 	return strings.TrimRight(sb.String(), " ")
 }
 func (f fileEntry) SectorsUsed() uint16 { return word(f[0x21:0x23]) }
+
+type fileType uint8
+
+const (
+	ftText           fileType = 0b0000_0000
+	ftIntegerBasic   fileType = 0b0000_0001
+	ftApplesoftBasic fileType = 0b0000_0010
+	ftBinary         fileType = 0b0000_0100
+	ftS              fileType = 0b0000_1000
+	ftRelocatable    fileType = 0b0001_0000
+	ftA              fileType = 0b0010_0000
+	ftB              fileType = 0b0100_0000
+)
+
+func (ft fileType) String() string {
+	switch ft {
+	case ftText:
+		return "T"
+	case ftIntegerBasic:
+		return "I"
+	case ftApplesoftBasic:
+		return "A"
+	case ftBinary:
+		return "B"
+	case ftS:
+		return "S"
+	case ftRelocatable:
+		return "R"
+	case ftA:
+		return "A"
+	case ftB:
+		return "B"
+	default:
+		panic("filetype.String: switch is non-exhaustive")
+	}
+}
 
 /// Track Sector List Format
 /*
