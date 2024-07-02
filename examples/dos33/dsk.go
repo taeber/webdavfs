@@ -225,11 +225,15 @@ func (dsk *diskette) CATALOGFile() (*memFile, error) {
 		if file.IsLocked() {
 			lock = '*'
 		}
+
 		sb.WriteString(fmt.Sprintf("%c%c %03d ",
 			lock,
 			file.Type().String()[0],
 			file.SectorsUsed()))
-		sb.WriteString(fmt.Sprintln(file.Name()))
+
+		writeFileName(&sb, file.Name())
+		sb.WriteRune('\n')
+
 		return true
 	})
 
@@ -269,6 +273,36 @@ func (dsk *diskette) Catalog(callback func(fileEntry) bool) {
 		if catalog[offsetNextTrack] == 0 {
 			break
 		}
+	}
+}
+
+// writeFileNameln writes out filename to sb, including correctly handling
+// INVERSE'd filenames allowable on Apple DOS by using ASCII escape codes.
+func writeFileName(sb *strings.Builder, filename string) {
+	const (
+		escCodeReset   = "\033[0m"
+		escCodeInverse = "\033[47;30m"
+	)
+
+	inverted := false
+	for _, ch := range filename {
+		if ch&0x60 == 0 {
+			if !inverted {
+				sb.WriteString(escCodeInverse)
+			}
+			inverted = true
+			sb.WriteRune(ch | 0x40)
+		} else {
+			if inverted {
+				sb.WriteString(escCodeReset)
+			}
+			inverted = false
+			sb.WriteRune(ch)
+		}
+	}
+
+	if inverted {
+		sb.WriteString(escCodeReset)
 	}
 }
 
