@@ -1,18 +1,18 @@
-package dos33
+package dsk
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-/// diskette
-
-type diskette struct {
+// Diskette represents an Apple DOS 3.3 formatted disk image.
+type Diskette struct {
 	path     string // Path on host
 	name     string
 	bytes    []byte
@@ -22,18 +22,19 @@ type diskette struct {
 	vtoc     []byte
 }
 
-func (dsk *diskette) ModTime() time.Time    { return dsk.modTime }
-func (dsk *diskette) SectorsPerTrack() uint { return uint(dsk.vtoc[0x35]) }
-func (dsk *diskette) Volume() uint          { return uint(dsk.vtoc[0x06]) }
+func (dsk *Diskette) Name() string          { return dsk.name }
+func (dsk *Diskette) ModTime() time.Time    { return dsk.modTime }
+func (dsk *Diskette) SectorsPerTrack() uint { return uint(dsk.vtoc[0x35]) }
+func (dsk *Diskette) Volume() uint          { return uint(dsk.vtoc[0x06]) }
 
-func loadDiskette(path string) (*diskette, error) {
+// LoadDiskette reads the disk image at path.
+func LoadDiskette(path string) (*Diskette, error) {
 	file, err, readonly := tryOpenFileRW(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var fi fs.FileInfo
-	fi, err = file.Stat()
+	fi, err := file.Stat()
 	if err != nil {
 		return nil, err
 	}
@@ -49,9 +50,12 @@ func loadDiskette(path string) (*diskette, error) {
 		return nil, fmt.Errorf("failed to read all bytes of %s; wanted %d, got %d", path, size, n)
 	}
 
-	return &diskette{
+	name := filepath.Base(path)
+	ext := filepath.Ext(name)
+
+	return &Diskette{
 		path:     path,
-		name:     filepath.Base(path),
+		name:     name[:len(name)-len(ext)],
 		readonly: readonly,
 		size:     fi.Size(),
 		modTime:  fi.ModTime(),
@@ -60,13 +64,22 @@ func loadDiskette(path string) (*diskette, error) {
 	}, nil
 }
 
-func (dsk *diskette) rawSector(track, sector uint) []byte {
+func (dsk *Diskette) rawSector(track, sector uint) []byte {
 	const sectorSize = 256
 	offset := (track*dsk.SectorsPerTrack() + sector) * sectorSize
 	return dsk.bytes[offset:]
 }
 
-func diskName(dsk *diskette) string { return dsk.name }
+// tryOpenFileRW tries to open a file for read-write, but falls back to
+// read-only if it fails.
+func tryOpenFileRW(path string) (file *os.File, err error, readonly bool) {
+	file, err = os.OpenFile(path, os.O_RDWR, os.FileMode(0))
+	if errors.Is(err, os.ErrPermission) {
+		readonly = true
+		file, err = os.OpenFile(path, os.O_RDONLY, os.FileMode(0))
+	}
+	return
+}
 
 // Volume Table of Contents
 /*
@@ -105,7 +118,7 @@ $C4-FF bit maps for additional tracks if there are more than 35 tracks per
          diskette
 */
 
-func (dsk *diskette) VTOCFile() (*memFile, error) {
+func (dsk *Diskette) VTOCFile() string {
 	vtoc := dsk.vtoc
 
 	sb := strings.Builder{}
@@ -172,7 +185,7 @@ func (dsk *diskette) VTOCFile() (*memFile, error) {
 		bitmap += 4
 	}
 
-	return newMemFile("VTOC", sb.String(), dsk.modTime), nil
+	return sb.String()
 }
 
 func vtocOffset(size int64) uint {
@@ -198,7 +211,9 @@ func vtocOffset(size int64) uint {
 /*
 http://fileformats.archiveteam.org/wiki/Apple_DOS_file_system#Catalog
 
-The catalog consists of a 35 byte "File Descriptive Entry" for each file on the disk. The catalog is a chain of sectors, the location of the first Catalog sector is found by looking in the VTOC.
+The catalog consists of a 35 byte "File Descriptive Entry" for each file on the
+disk. The catalog is a chain of sectors, the location of the first Catalog
+sector is found by looking in the VTOC.
 
 offset
 ----
@@ -215,65 +230,33 @@ $BA-DC Sixth file descriptive entry
 $DD-FF Seventh file descriptive entry
 */
 
-func (dsk *diskette) CATALOGFile() (*memFile, error) {
-	sb := strings.Builder{}
-
-	sb.WriteString(fmt.Sprintf("\nDISK VOLUME %d\n\n", dsk.Volume()))
-
-	dsk.Catalog(func(file fileEntry) bool {
-		lock := ' '
-		if file.IsLocked() {
-			lock = '*'
-		}
-
-		sb.WriteString(fmt.Sprintf("%c%c %03d ",
-			lock,
-			file.Type().String()[0],
-			file.SectorsUsed()))
-
-		writeFileName(&sb, file.Name())
-		sb.WriteRune('\n')
-
-		return true
-	})
-
-	sb.WriteRune('\n')
-
-	return newMemFile("CATALOG", sb.String(), dsk.modTime), nil
-}
-
-// Catalog iterates over every file on disk and applies callback, stopping
-// iteration when callback returns false.
-func (dsk *diskette) Catalog(callback func(fileEntry) bool) {
+// Catalog returns all the files on disk. every file on disk and applies callback, stopping
+func (dsk *Diskette) Catalog() (entries []FileEntry) {
 	const (
 		offsetNextTrack  uint = 0x01
 		offsetNextSector uint = 0x02
 	)
 
-	const (
-		offsetFirstEntry = 0x0b
-		entrySize        = 35
-		maxEntries       = 8
-	)
+	entryOffsets := []uint8{0x0B, 0x2E, 0x51, 0x74, 0x97, 0xBA, 0xDD}
 
 	catalog := dsk.vtoc
 	for {
 		catalog = dsk.rawSector(uint(catalog[offsetNextTrack]), uint(catalog[offsetNextSector]))
-		for i := 0; i < maxEntries; i++ {
-			entry := fileEntry(catalog[(offsetFirstEntry + i*entrySize):])
+		for _, offset := range entryOffsets {
+			entry := FileEntry(catalog[offset:])
 			if entry.IsEmpty() {
 				continue
 			}
 
-			if !callback(entry) {
-				return
-			}
+			entries = append(entries, entry)
 		}
 
 		if catalog[offsetNextTrack] == 0 {
 			break
 		}
 	}
+
+	return
 }
 
 // writeFileNameln writes out filename to sb, including correctly handling
@@ -306,6 +289,35 @@ func writeFileName(sb *strings.Builder, filename string) {
 	}
 }
 
+func RunCatalog(dsk *Diskette) string {
+	sb := strings.Builder{}
+
+	sb.WriteString(fmt.Sprintf("\nDISK VOLUME %d\n\n", dsk.Volume()))
+
+	for _, file := range dsk.Catalog() {
+		if file.IsDeleted() {
+			continue
+		}
+
+		lock := ' '
+		if file.IsLocked() {
+			lock = '*'
+		}
+
+		sb.WriteString(fmt.Sprintf("%c%c %03d ",
+			lock,
+			file.Type().String()[0],
+			file.SectorsUsed()))
+
+		writeFileName(&sb, file.Name())
+		sb.WriteRune('\n')
+	}
+
+	sb.WriteRune('\n')
+
+	return sb.String()
+}
+
 /// File Descriptive Entry
 /*
 http://fileformats.archiveteam.org/wiki/Apple_DOS_file_system#File_Descriptive_Entry
@@ -334,13 +346,13 @@ $03-20 File Name (30 characters)
 $21-22 Length of file in sectors (LO/HI format)
 */
 
-type fileEntry []byte
+type FileEntry []byte
 
-func (f fileEntry) IsEmpty() bool   { return f[0x00] == 0x00 }
-func (f fileEntry) IsDeleted() bool { return f[0x00] == 0xff }
-func (f fileEntry) IsLocked() bool  { return f[0x02]&0x80 != 0 }
-func (f fileEntry) Type() fileType  { return fileType(f[0x02] & 0x7f) }
-func (f fileEntry) Name() string {
+func (f FileEntry) IsEmpty() bool   { return f[0x00] == 0x00 }
+func (f FileEntry) IsDeleted() bool { return f[0x00] == 0xff }
+func (f FileEntry) IsLocked() bool  { return f[0x02]&0x80 != 0 }
+func (f FileEntry) Type() FileType  { return FileType(f[0x02] & 0x7f) }
+func (f FileEntry) Name() string {
 	size := 30
 	if f.IsDeleted() {
 		size--
@@ -353,22 +365,22 @@ func (f fileEntry) Name() string {
 
 	return strings.TrimRight(sb.String(), " ")
 }
-func (f fileEntry) SectorsUsed() uint16 { return word(f[0x21:0x23]) }
+func (f FileEntry) SectorsUsed() uint16 { return word(f[0x21:0x23]) }
 
-type fileType uint8
+type FileType uint8
 
 const (
-	ftText           fileType = 0b0000_0000
-	ftIntegerBasic   fileType = 0b0000_0001
-	ftApplesoftBasic fileType = 0b0000_0010
-	ftBinary         fileType = 0b0000_0100
-	ftS              fileType = 0b0000_1000
-	ftRelocatable    fileType = 0b0001_0000
-	ftA              fileType = 0b0010_0000
-	ftB              fileType = 0b0100_0000
+	ftText           FileType = 0b0000_0000
+	ftIntegerBasic   FileType = 0b0000_0001
+	ftApplesoftBasic FileType = 0b0000_0010
+	ftBinary         FileType = 0b0000_0100
+	ftS              FileType = 0b0000_1000
+	ftRelocatable    FileType = 0b0001_0000
+	ftA              FileType = 0b0010_0000
+	ftB              FileType = 0b0100_0000
 )
 
-func (ft fileType) String() string {
+func (ft FileType) String() string {
 	switch ft {
 	case ftText:
 		return "T"
@@ -406,3 +418,9 @@ $0C-0D Track and sector of first data sector or zeros
 $0E-0F Track and sector of second data sector or zeros
 $10-FF Up to 120 more track and sector pairs
 */
+
+// word interprets bytes as a little-endian, 16-bit, unsigned integer.
+// This is the representation of the MOS 6502.
+func word(bytes []byte) uint16 {
+	return binary.LittleEndian.Uint16(bytes)
+}

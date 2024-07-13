@@ -9,12 +9,21 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"slices"
+	"os"
 	"strings"
 	"time"
 
 	"golang.org/x/net/webdav"
+	"taeber.rapczak.com/webdavfs/examples/dos33/dsk"
 )
+
+type specialName = string
+
+func snReadme() specialName                 { return "README.txt" }
+func snDos() specialName                    { return "_dos" }
+func snCatalog() specialName                { return "_catalog.txt" }
+func snLock(filename string) specialName    { return fmt.Sprintf("_%s.lock", filename) }
+func snDeleted(filename string) specialName { return fmt.Sprintf("_%s.garbage", filename) }
 
 // ListenAndServe starts a new WebDAV server at http://{addr}{prefix} with each
 // of the disks exposing the DOS 3.3 DSK filesystem.
@@ -37,7 +46,7 @@ func ListenAndServe(addr, prefix string, disks ...string) error {
 	log.Println("Serving DOS3.3 DSK filesystem over WebDAV")
 	log.Println(" Address:", uri)
 	for _, dsk := range dosfs.disks {
-		log.Printf("          %s/%s/\n", uri, url.PathEscape(diskName(dsk)))
+		log.Printf("          %s/%s/\n", uri, url.PathEscape(dsk.Name()))
 	}
 
 	return http.ListenAndServe(addr, &handler)
@@ -47,255 +56,266 @@ func ListenAndServe(addr, prefix string, disks ...string) error {
 
 type dos33FS struct {
 	created time.Time
-	disks   []*diskette
+	disks   []*dsk.Diskette
+	//	type FileSystem interface {
+	//		Mkdir(ctx context.Context, name string, perm os.FileMode) error
+	//		OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (File, error)
+	//		RemoveAll(ctx context.Context, name string) error
+	//		Rename(ctx context.Context, oldName, newName string) error
+	//		Stat(ctx context.Context, name string) (os.FileInfo, error)
+	//	}
 }
 
-var (
-	// Directories under each DSK folder.
-	dskDirs = w("files applesoft binary intbasic text a b r s locks")
-	// Files under each DSK folder.
-	dskFiles = w("CATALOG VTOC")
-)
-
-func (fs *dos33FS) OpenFile(ctx context.Context, name string, flag int, perm fs.FileMode) (webdav.File, error) {
-	req := fs.parsePath(name)
-
-	if req.IsRoot() {
-		return rootDirectory(fs), nil
+func (dfs *dos33FS) OpenFile(_ context.Context, name string, _ int, _ fs.FileMode) (webdav.File, error) {
+	root := &rootDir{dfs: dfs}
+	name = strings.TrimLeft(name, "/")
+	if file, err := walk(root, name); err != nil {
+		return nil, err
+	} else {
+		return file.Open()
 	}
-
-	if req.IsReadme() {
-		return newMemFile("README", readme, fs.created), nil
-	}
-
-	if dsk := req.DiskRoot(); dsk != nil {
-		return diskDirectory(dsk), nil
-	}
-
-	if dsk, folder := req.DiskDir(); dsk != nil {
-		return &directory{fileInfo: *newDirInfo(folder, dsk.ModTime())}, nil
-	}
-
-	if dsk, name := req.DiskSpecial(); dsk != nil {
-		switch name {
-		case "CATALOG":
-			return dsk.CATALOGFile()
-		case "VTOC":
-			return dsk.VTOCFile()
-		}
-		panic("Logic error: unknown special file: " + name)
-	}
-
-	return nil, http.ErrMissingFile
 }
 
-func (fs *dos33FS) Stat(ctx context.Context, name string) (fs.FileInfo, error) {
-	req := fs.parsePath(name)
+func (dfs *dos33FS) Stat(_ context.Context, name string) (fs.FileInfo, error) {
+	root := &rootDir{dfs: dfs}
+	name = strings.TrimLeft(name, "/")
+	if file, err := walk(root, name); err != nil {
+		return nil, err
+	} else {
+		return file.Stat()
+	}
+}
 
-	if req.IsRoot() {
-		return newDirInfo("/", fs.created), nil
+func walk(parent fileWrapper, pathname string) (fileWrapper, error) {
+	if pathname == "" {
+		return parent, nil
 	}
 
-	if req.IsReadme() {
-		return newFileInfo("README", fs.created), nil
-	}
+	split := strings.SplitN(pathname, "/", 2)
+	name := split[0]
 
-	if dsk := req.DiskRoot(); dsk != nil {
-		return newDirInfo(dsk.name, dsk.ModTime()), nil
+	child, found := parent.Children()[name]
+	if !found {
+		return nil, os.ErrNotExist
 	}
-
-	if dsk, folder := req.DiskDir(); dsk != nil {
-		return newDirInfo(folder, dsk.ModTime()), nil
+	if len(split) == 1 {
+		return child, nil
 	}
-
-	if dsk, name := req.DiskSpecial(); dsk != nil {
-		return newFileInfo(name, dsk.ModTime()), nil
+	if child.IsDir() {
+		return walk(child, split[1])
 	}
-
-	return nil, http.ErrMissingFile
+	return nil, os.ErrInvalid // child is not a directory
 }
 
 func (*dos33FS) Mkdir(_ context.Context, _ string, _ fs.FileMode) error { return errors.ErrUnsupported }
-func (fs *dos33FS) RemoveAll(_ context.Context, _ string) error         { return errors.ErrUnsupported }
-func (fs *dos33FS) Rename(_ context.Context, _ string, _ string) error  { return errors.ErrUnsupported }
-
-func (fs *dos33FS) find(name string) *diskette {
-	for _, dsk := range fs.disks {
-		if dsk.name == name {
-			return dsk
-		}
-	}
-	return nil
-}
-
-func (fs *dos33FS) parsePath(path string) (p fspath) {
-	for _, part := range strings.Split(path, "/") {
-		if part != "" {
-			p.parts = append(p.parts, part)
-		}
-	}
-	p.fs = fs
-	return
-}
-
-type fspath struct {
-	fs    *dos33FS
-	parts []string
-}
-
-func (p fspath) IsRoot() bool   { return len(p.parts) == 0 }
-func (p fspath) IsReadme() bool { return len(p.parts) == 1 && p.parts[0] == "README" }
-func (p fspath) DiskRoot() *diskette {
-	if len(p.parts) == 1 {
-		return p.uncheckedFind()
-	}
-	return nil
-}
-func (p fspath) DiskDir() (*diskette, string) {
-	if len(p.parts) == 2 && dskDirs.Contains(p.parts[1]) {
-		if dsk := p.uncheckedFind(); dsk != nil {
-			return dsk, p.parts[1]
-		}
-	}
-	return nil, ""
-}
-func (p fspath) DiskSpecial() (*diskette, string) {
-	if len(p.parts) == 2 && dskFiles.Contains(p.parts[1]) {
-		if dsk := p.uncheckedFind(); dsk != nil {
-			return dsk, p.parts[1]
-		}
-	}
-	return nil, ""
-}
-func (p fspath) uncheckedFind() *diskette { return p.fs.find(p.parts[0]) }
+func (*dos33FS) RemoveAll(_ context.Context, _ string) error            { return errors.ErrUnsupported }
+func (*dos33FS) Rename(_ context.Context, _ string, _ string) error     { return errors.ErrUnsupported }
 
 // newFileSystem returns a new DOS 3.3 DSK Filesystem.
 func newFileSystem(disks ...string) *dos33FS {
-	fs := &dos33FS{
-		created: time.Now(),
-	}
+	dfs := dos33FS{created: time.Now()}
 	for _, name := range disks {
-		dsk, err := loadDiskette(name)
+		dsk, err := dsk.LoadDiskette(name)
 		if err != nil {
 			log.Fatalln("Could not load diskette:", name, err)
 			continue
 		}
-		fs.disks = append(fs.disks, dsk)
+		dfs.disks = append(dfs.disks, dsk)
 	}
-	return fs
+	return &dfs
 }
 
-func rootDirectory(fs *dos33FS) *directory {
-	return &directory{
-		fileInfo: *newDirInfo("/", fs.created),
-		children: slices.Concat(
-			dirs(transform(fs.disks, diskName)...),
-			files("README"),
-		),
+// fileWrapper is the base interface for all dos33FS files.
+type fileWrapper interface {
+	Open() (webdav.File, error)
+	Stat() (fs.FileInfo, error)
+	Children() map[string]fileWrapper
+	IsDir() bool
+}
+
+func readDir(file fileWrapper) ([]fs.FileInfo, error) {
+	if !file.IsDir() {
+		return nil, errors.ErrUnsupported
 	}
-}
 
-func diskDirectory(dsk *diskette) *directory {
-	return &directory{
-		fileInfo: *newDirInfo(dsk.name, dsk.ModTime()),
-		children: slices.Concat(
-			dirs(dskDirs...),
-			files(dskFiles...),
-		),
+	children := make([]fs.FileInfo, 0, len(file.Children()))
+	for _, child := range file.Children() {
+		if info, err := child.Stat(); err == nil {
+			children = append(children, info)
+		}
 	}
+
+	return children, nil
 }
 
-/// directory
-
-type directory struct {
-	fileInfo
-	children []fs.FileInfo
-}
-
-func (f *directory) Readdir(count int) ([]fs.FileInfo, error) {
-	if count > 0 {
-		return f.children[0:count], nil
+/*
+	type webdav.File interface {
+	  http.File
+	    io.Closer
+	      Close() error
+	    io.Reader
+	      Read(p []byte) (int, error)
+	    io.Seeker
+	      Seek(offset int64, whence int) (int64, error)
+	    Readdir(count int) ([]fs.FileInfo, error)
+	    Stat() (fs.FileInfo, error)
+	  io.Writer
+	    Write(p []byte) (int, error)
 	}
-	return f.children, nil
-}
-func (f *directory) Stat() (fs.FileInfo, error)                   { return f, nil }
-func (f *directory) Close() error                                 { return nil }
-func (f *directory) Write(p []byte) (int, error)                  { return 0, errors.ErrUnsupported }
-func (f *directory) Read(p []byte) (int, error)                   { return 0, errors.ErrUnsupported }
-func (f *directory) Seek(offset int64, whence int) (int64, error) { return 0, errors.ErrUnsupported }
+*/
 
-/// fileInfo
-
+// fileInfo is the simplest implementation of [fs.FileInfo].
 type fileInfo struct {
 	name    string
-	mode    fs.FileMode
-	modTime time.Time
-	isDir   bool
-	sys     any
 	size    int64
+	isDir   bool
+	modTime time.Time
 }
 
-func (info *fileInfo) Name() string       { return info.name }
-func (info *fileInfo) Mode() fs.FileMode  { return info.mode }
-func (info *fileInfo) IsDir() bool        { return info.isDir }
-func (info *fileInfo) ModTime() time.Time { return info.modTime }
-func (info *fileInfo) Sys() any           { return info.sys }
-func (info *fileInfo) Size() int64        { return info.size }
+func (f *fileInfo) Name() string { return f.name }
+func (f *fileInfo) Size() int64  { return f.size }
+func (f *fileInfo) Mode() fs.FileMode {
+	if f.isDir {
+		return fs.ModeDir | fs.ModePerm
+	} else {
+		return fs.ModePerm
+	}
+}
+func (f *fileInfo) ModTime() time.Time { return f.modTime }
+func (f *fileInfo) IsDir() bool        { return f.Mode().IsDir() }
+func (f *fileInfo) Sys() any           { return nil }
 
-func dirs(names ...string) []fs.FileInfo {
-	return transform(names, func(name string) fs.FileInfo { return newDirInfo(name, time.Time{}) })
+// anyDir is a partial implementation of [fileWrapper] methods common to any directory.
+type anyDir struct{}
+
+// func (dir *anyDir) Open() (webdav.File, error)         { return dir, nil }
+// func (dir *anyDir) Readdir(int) ([]fs.FileInfo, error) { return readDir(dir) }
+func (*anyDir) IsDir() bool                    { return true }
+func (*anyDir) Close() error                   { return nil }
+func (*anyDir) Read([]byte) (int, error)       { return -1, errors.ErrUnsupported }
+func (*anyDir) Seek(int64, int) (int64, error) { return -1, errors.ErrUnsupported }
+func (*anyDir) Write([]byte) (int, error)      { return -1, errors.ErrUnsupported }
+
+// anyFile is a partial implementation of [fileWrapper] methods common to every file.
+type anyFile struct{}
+
+func (*anyFile) IsDir() bool                        { return false }
+func (*anyFile) Close() error                       { return nil }
+func (*anyFile) Children() map[string]fileWrapper   { return nil }
+func (*memFile) Readdir(int) ([]fs.FileInfo, error) { return nil, errors.ErrUnsupported }
+
+// rootDir is
+type rootDir struct {
+	anyDir
+	dfs *dos33FS
 }
 
-func files(names ...string) (infos []fs.FileInfo) {
-	return transform(names, func(name string) fs.FileInfo { return newFileInfo(name, time.Time{}) })
-}
-
-func newDirInfo(name string, modTime time.Time) *fileInfo {
+func (dir *rootDir) Open() (webdav.File, error)         { return dir, nil }
+func (dir *rootDir) Readdir(int) ([]fs.FileInfo, error) { return readDir(dir) }
+func (dir *rootDir) Stat() (fs.FileInfo, error) {
 	return &fileInfo{
-		name:    name,
-		mode:    fs.ModeDir | fs.ModePerm,
-		modTime: modTime,
+		modTime: dir.dfs.created,
 		isDir:   true,
+	}, nil
+}
+func (dir *rootDir) Children() map[string]fileWrapper {
+	kids := make(map[string]fileWrapper)
+	kids[snReadme()] = newMemFile(snReadme(), readme, dir.dfs.created)
+	for _, dsk := range dir.dfs.disks {
+		kids[dsk.Name()] = &dskDir{dsk: dsk}
 	}
+	return kids
 }
 
-func newFileInfo(name string, modTime time.Time) *fileInfo {
+// memDir is an in-memory directory.
+type memDir struct {
+	anyDir
+	name     string
+	modTime  time.Time
+	children map[string]fileWrapper
+}
+
+func (dir *memDir) Open() (webdav.File, error)         { return dir, nil }
+func (dir *memDir) Readdir(int) ([]fs.FileInfo, error) { return readDir(dir) }
+func (dir *memDir) Stat() (fs.FileInfo, error) {
 	return &fileInfo{
-		name:    name,
-		mode:    0444,
-		modTime: modTime,
-	}
+		name:    dir.name,
+		isDir:   true,
+		modTime: dir.modTime,
+	}, nil
+}
+func (dir *memDir) Children() map[string]fileWrapper { return dir.children }
+
+// dskDir
+type dskDir struct {
+	anyDir
+	dsk *dsk.Diskette
 }
 
-/// memFile
+func (dir *dskDir) Open() (webdav.File, error)         { return dir, nil }
+func (dir *dskDir) Readdir(int) ([]fs.FileInfo, error) { return readDir(dir) }
+func (dir *dskDir) Stat() (fs.FileInfo, error) {
+	return &fileInfo{
+		name:    dir.dsk.Name(),
+		isDir:   true,
+		modTime: dir.dsk.ModTime(),
+	}, nil
+}
+func (dir *dskDir) Children() map[string]fileWrapper {
+	kids := make(map[string]fileWrapper)
+	kids[snDos()] = &memDir{
+		name:     snDos(),
+		modTime:  dir.dsk.ModTime(),
+		children: make(map[string]fileWrapper, 0),
+	}
+	kids[snCatalog()] = newMemFile(snCatalog(), dsk.RunCatalog(dir.dsk), dir.dsk.ModTime())
+	for _, file := range dir.dsk.Catalog() {
+		name := file.Name()
+		if file.IsDeleted() {
+			name = snDeleted(name)
+		} else if file.IsLocked() {
+			kids[snLock(name)] = newMemFile(snLock(name), "", dir.dsk.ModTime())
+		}
+		kids[name] = newMemFile(name, "TODO: dskFile", dir.dsk.ModTime())
+	}
 
+	return kids
+}
+
+// memFile is an in-memory file.
 type memFile struct {
-	fileInfo
+	anyFile
+	name    string
+	modTime time.Time
 	content *bytes.Reader
 }
 
-func (file *memFile) Size() int64                              { return file.content.Size() }
-func (file *memFile) Close() error                             { return nil }
-func (file *memFile) Read(p []byte) (n int, err error)         { return file.content.Read(p) }
-func (file *memFile) Readdir(count int) ([]fs.FileInfo, error) { return nil, errors.ErrUnsupported }
-func (file *memFile) Stat() (fs.FileInfo, error)               { return file, nil }
-func (file *memFile) Write(p []byte) (n int, err error)        { return 0, errors.ErrUnsupported }
-func (file *memFile) Seek(offset int64, whence int) (int64, error) {
-	return file.content.Seek(offset, whence)
+func (file *memFile) Open() (webdav.File, error) { return file, nil }
+func (f *memFile) Read(p []byte) (int, error)    { return f.content.Read(p) }
+func (f *memFile) Seek(offset int64, whence int) (int64, error) {
+	return f.content.Seek(offset, whence)
 }
+func (f *memFile) Stat() (fs.FileInfo, error) {
+	return &fileInfo{
+		name:    f.name,
+		size:    f.content.Size(),
+		modTime: f.modTime,
+	}, nil
+}
+func (*memFile) Write(p []byte) (int, error) { return 0, os.ErrInvalid }
 
 func newMemFile(name, content string, modTime time.Time) *memFile {
 	return &memFile{
-		fileInfo: fileInfo{
-			name:    name,
-			mode:    0444,
-			modTime: modTime,
-		},
+		name:    name,
+		modTime: modTime,
 		content: bytes.NewReader([]byte(content)),
 	}
 }
 
+// Contents of README.txt.
 const readme = `DOS 3.3 DSK Filesystem Folder Structure
+
+TODO: update with new structure
 
 Each DSK is represented as a folder with the following files and folders.
 
