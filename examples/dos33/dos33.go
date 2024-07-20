@@ -202,7 +202,7 @@ type anyFile struct{}
 func (*anyFile) IsDir() bool                        { return false }
 func (*anyFile) Close() error                       { return nil }
 func (*anyFile) Children() map[string]fileWrapper   { return nil }
-func (*memFile) Readdir(int) ([]fs.FileInfo, error) { return nil, errors.ErrUnsupported }
+func (*anyFile) Readdir(int) ([]fs.FileInfo, error) { return nil, errors.ErrUnsupported }
 
 // rootDir is
 type rootDir struct {
