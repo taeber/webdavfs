@@ -307,7 +307,7 @@ func RunCatalog(dsk *Diskette) string {
 		line := fmt.Sprintf("%c%c %03d %s\n",
 			lock,
 			file.Type().String()[0],
-			file.SectorsUsed(),
+			file.SectorsUsed()%256,
 			file.Name().ANSIEscaped())
 
 		sb.WriteString(line)
