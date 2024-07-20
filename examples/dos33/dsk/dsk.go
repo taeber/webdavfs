@@ -70,18 +70,7 @@ func (dsk *Diskette) rawSector(track, sector uint) []byte {
 	return dsk.bytes[offset:]
 }
 
-// tryOpenFileRW tries to open a file for read-write, but falls back to
-// read-only if it fails.
-func tryOpenFileRW(path string) (file *os.File, err error, readonly bool) {
-	file, err = os.OpenFile(path, os.O_RDWR, os.FileMode(0))
-	if errors.Is(err, os.ErrPermission) {
-		readonly = true
-		file, err = os.OpenFile(path, os.O_RDONLY, os.FileMode(0))
-	}
-	return
-}
-
-// Volume Table of Contents
+/// Volume Table of Contents
 /*
 http://fileformats.archiveteam.org/wiki/Apple_DOS_file_system#Volume_Table_Of_Contents
 
@@ -488,6 +477,19 @@ $0C-0D Track and sector of first data sector or zeros
 $0E-0F Track and sector of second data sector or zeros
 $10-FF Up to 120 more track and sector pairs
 */
+
+/// Helper functions
+
+// tryOpenFileRW tries to open a file for read-write, but falls back to
+// read-only if it fails.
+func tryOpenFileRW(path string) (file *os.File, err error, readonly bool) {
+	file, err = os.OpenFile(path, os.O_RDWR, os.FileMode(0))
+	if errors.Is(err, os.ErrPermission) {
+		readonly = true
+		file, err = os.OpenFile(path, os.O_RDONLY, os.FileMode(0))
+	}
+	return
+}
 
 // word interprets bytes as a little-endian, 16-bit, unsigned integer.
 // This is the representation of the MOS 6502.
