@@ -304,13 +304,13 @@ func RunCatalog(dsk *Diskette) string {
 			lock = '*'
 		}
 
-		sb.WriteString(fmt.Sprintf("%c%c %03d ",
+		line := fmt.Sprintf("%c%c %03d %s\n",
 			lock,
 			file.Type().String()[0],
-			file.SectorsUsed()))
+			file.SectorsUsed(),
+			file.Name().ANSIEscaped())
 
-		writeFileName(&sb, file.Name())
-		sb.WriteRune('\n')
+		sb.WriteString(line)
 	}
 
 	sb.WriteRune('\n')
@@ -352,20 +352,90 @@ func (f FileEntry) IsEmpty() bool   { return f[0x00] == 0x00 }
 func (f FileEntry) IsDeleted() bool { return f[0x00] == 0xff }
 func (f FileEntry) IsLocked() bool  { return f[0x02]&0x80 != 0 }
 func (f FileEntry) Type() FileType  { return FileType(f[0x02] & 0x7f) }
-func (f FileEntry) Name() string {
+func (f FileEntry) Name() Filename {
+	const hiAsciiSpace = 0xA0
 	size := 30
 	if f.IsDeleted() {
 		size--
 	}
-
-	sb := strings.Builder{}
-	for i := 0; i < size; i++ {
-		sb.WriteRune(rune(f[0x03+i] & 0x7f))
+	for f[0x03+size-1] == hiAsciiSpace {
+		size--
 	}
-
-	return strings.TrimRight(sb.String(), " ")
+	return Filename(f[0x03:][:size])
 }
 func (f FileEntry) SectorsUsed() uint16 { return word(f[0x21:0x23]) }
+
+// Filename is the name of a DOS 3.3 file.
+//
+// "DOS 3.x filenames can from 1-30 characters in length, and must start with an
+// uppercase letter. They cannot contain commas, colons, but can contain control
+// characters."
+// https://www.apple2.org/faq/FAQ.dos.prodos.html#DOS_3.x_file_names_and_types
+//
+// Also, the Apple II has 3 types of text: normal, inverted, and flashing.
+// In-memory, a mask is used:
+//
+//	Inverted = $3F = 0011_1111
+//	   Flash = $7F = 0111_1111
+//	  Normal = $FF = 1111_1111
+//
+// "Normal" has the high bit set. This "Hi-ASCII" is incompatible with UTF-8.
+//
+// DOS supports inverted characters in filenames; modern systems do not.
+type Filename []byte
+
+func (name Filename) String() string {
+	sb := strings.Builder{}
+	for _, ch := range name {
+		sb.WriteByte(ch & 0b0111_1111)
+	}
+	return sb.String()
+}
+
+func (name Filename) PathSafe() string {
+	sb := strings.Builder{}
+	for _, ch := range name {
+		isInverted := ch&0b1000_0000 == 0
+		if isInverted {
+			sb.WriteByte(ch | 0b0100_0000)
+		} else {
+			sb.WriteByte(ch & 0b0111_1111)
+		}
+	}
+	return sb.String()
+}
+
+func (name Filename) ANSIEscaped() string {
+	const (
+		escCodeReset   = "\033[0m"
+		escCodeInverse = "\033[47;30m"
+	)
+
+	sb := strings.Builder{}
+	prevInverted := false
+	for _, ch := range name {
+		isInverted := ch&0b1000_0000 == 0
+		if isInverted {
+			if !prevInverted {
+				sb.WriteString(escCodeInverse)
+			}
+			prevInverted = true
+			sb.WriteByte(ch | 0x40)
+		} else {
+			if prevInverted {
+				sb.WriteString(escCodeReset)
+			}
+			prevInverted = false
+			sb.WriteByte(ch & 0b0111_1111)
+		}
+	}
+
+	if prevInverted {
+		sb.WriteString(escCodeReset)
+	}
+
+	return sb.String()
+}
 
 type FileType uint8
 

@@ -270,7 +270,8 @@ func (dir *dskDir) Children() map[string]fileWrapper {
 	}
 	kids[snCatalog()] = newMemFile(snCatalog(), dsk.RunCatalog(dir.dsk), dir.dsk.ModTime())
 	for _, file := range dir.dsk.Catalog() {
-		name := file.Name()
+		// TODO: handle the case where the path-safe name conflicts (like inverted HELLO and HELLO)
+		name := file.Name().PathSafe()
 		if file.IsDeleted() {
 			name = snDeleted(name)
 		} else if file.IsLocked() {
