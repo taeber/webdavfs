@@ -501,26 +501,16 @@ const (
 )
 
 func (ft FileType) String() string {
-	switch ft {
-	case ftText:
-		return "T"
-	case ftIntegerBasic:
-		return "I"
-	case ftApplesoftBasic:
-		return "A"
-	case ftBinary:
-		return "B"
-	case ftS:
-		return "S"
-	case ftRelocatable:
-		return "R"
-	case ftA:
-		return "A"
-	case ftB:
-		return "B"
-	default:
-		panic("filetype.String: switch is non-exhaustive")
-	}
+	return map[FileType]string{
+		ftText:           "T",
+		ftIntegerBasic:   "I",
+		ftApplesoftBasic: "A",
+		ftBinary:         "B",
+		ftS:              "S",
+		ftRelocatable:    "R",
+		ftA:              "A",
+		ftB:              "B",
+	}[ft]
 }
 
 /// Track Sector List Format
