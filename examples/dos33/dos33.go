@@ -21,7 +21,8 @@ type specialName = string
 
 func snReadme() specialName                 { return "README.txt" }
 func snDos() specialName                    { return "_dos" }
-func snCatalog() specialName                { return "_catalog.txt" }
+func snCatalog() specialName                { return "CATALOG.txt" }
+func snVtoc() specialName                   { return "VTOC.txt" }
 func snLock(filename string) specialName    { return fmt.Sprintf("%s,locked", filename) }
 func snDeleted(filename string) specialName { return fmt.Sprintf("_%s.garbage", filename) }
 
@@ -241,11 +242,13 @@ func (dir *dskDir) Stat() (fs.FileInfo, error) {
 func (dir *dskDir) Children() map[string]fileWrapper {
 	kids := make(map[string]fileWrapper)
 	kids[snDos()] = &memDir{
-		name:     snDos(),
-		modTime:  dir.dsk.ModTime(),
-		children: make(map[string]fileWrapper, 0),
+		name:    snDos(),
+		modTime: dir.dsk.ModTime(),
+		children: map[string]fileWrapper{
+			snCatalog(): newMemFile(snCatalog(), dsk.RunCatalog(dir.dsk), dir.dsk.ModTime()),
+			snVtoc():    newMemFile(snVtoc(), dir.dsk.VTOCFile(), dir.dsk.ModTime()),
+		},
 	}
-	kids[snCatalog()] = newMemFile(snCatalog(), dsk.RunCatalog(dir.dsk), dir.dsk.ModTime())
 	for _, file := range dir.dsk.Catalog() {
 		// TODO: handle the case where the path-safe name conflicts (like inverted HELLO and HELLO)
 		name := file.Name().PathSafe()
