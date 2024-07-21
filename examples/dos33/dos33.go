@@ -277,10 +277,41 @@ func (dir *dskDir) Children() map[string]fileWrapper {
 		} else if file.IsLocked() {
 			kids[snLock(name)] = newMemFile(snLock(name), "", dir.dsk.ModTime())
 		}
-		kids[name] = newMemFile(name, "TODO: dskFile", dir.dsk.ModTime())
+		// kids[name] = newMemFile(name, "TODO: dskFile", dir.dsk.ModTime())
+		kids[name] = &dskFile{dsk: dir.dsk, file: file}
 	}
 
 	return kids
+}
+
+type dskFile struct {
+	anyFile
+	dsk  *dsk.Diskette
+	file dsk.FileEntry
+}
+
+func (f *dskFile) Open() (webdav.File, error) {
+	buf, err := f.dsk.ReadAll(f.file)
+	if errors.Is(err, errors.ErrUnsupported) {
+		const todo = "TODO: handle reading this type"
+		return newMemFile(f.file.Name().PathSafe(), todo, f.dsk.ModTime()), nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	return &memFile{
+		name:    f.file.Name().PathSafe(),
+		modTime: f.dsk.ModTime(),
+		content: bytes.NewReader(buf),
+	}, nil
+}
+
+func (f *dskFile) Stat() (fs.FileInfo, error) {
+	return &fileInfo{
+		name:    f.file.Name().PathSafe(),
+		size:    int64(f.file.SectorsUsed() * dsk.SectorSize),
+		modTime: f.dsk.ModTime(),
+	}, nil
 }
 
 // memFile is an in-memory file.

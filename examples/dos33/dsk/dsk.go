@@ -1,15 +1,20 @@
 package dsk
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
+
+// SectorSize is the number of bytes in a DOS sector.
+const SectorSize = 256
 
 // Diskette represents an Apple DOS 3.3 formatted disk image.
 type Diskette struct {
@@ -24,8 +29,54 @@ type Diskette struct {
 
 func (dsk *Diskette) Name() string          { return dsk.name }
 func (dsk *Diskette) ModTime() time.Time    { return dsk.modTime }
+func (dsk *Diskette) NumTracks() uint       { return uint(dsk.vtoc[0x34]) }
 func (dsk *Diskette) SectorsPerTrack() uint { return uint(dsk.vtoc[0x35]) }
 func (dsk *Diskette) Volume() uint          { return uint(dsk.vtoc[0x06]) }
+
+func (dsk *Diskette) ReadAll(file FileEntry) ([]byte, error) {
+	readHeader := false
+	switch file.Type() {
+	case ftBinary, ftRelocatable:
+		readHeader = true
+	case ftText, ftIntegerBasic, ftApplesoftBasic, ftS, ftA, ftB:
+		readHeader = false
+	default:
+		panic("ReadAll: switch is non-exhaustive")
+	}
+
+	cap := file.SectorsUsed() * SectorSize
+	p := make([]byte, 0, cap)
+	buf := bytes.NewBuffer(p)
+
+	if readHeader {
+		var length uint16
+		for s, data := range dsk.DataSectors(file) {
+			i := 0
+			if s == 0 {
+				// First sector starts with 4-byte header (address + length)
+				address := word(data[0x00:])
+				length = word(data[0x02:])
+				fmt.Fprintf(os.Stderr, "%s - Address = $%.4X  Length = $%.4X\n",
+					file.Name().PathSafe(), address, length)
+				i = 4
+				buf.Write(data[:i])
+			}
+			for ; i < len(data) && length > 0; i++ {
+				buf.WriteByte(data[i])
+				length--
+			}
+			if length == 0 {
+				break
+			}
+		}
+	} else {
+		for _, data := range dsk.DataSectors(file) {
+			buf.Write(data)
+		}
+	}
+
+	return buf.Bytes(), nil
+}
 
 // LoadDiskette reads the disk image at path.
 func LoadDiskette(path string) (*Diskette, error) {
@@ -65,9 +116,13 @@ func LoadDiskette(path string) (*Diskette, error) {
 }
 
 func (dsk *Diskette) rawSector(track, sector uint) []byte {
-	const sectorSize = 256
-	offset := (track*dsk.SectorsPerTrack() + sector) * sectorSize
-	return dsk.bytes[offset:]
+	if track > dsk.NumTracks() {
+		panic(fmt.Errorf("rawSector: track is too large; wanted %d or less, got %d", dsk.NumTracks(), track))
+	} else if sector > dsk.SectorsPerTrack() {
+		panic(fmt.Errorf("rawSector: sector is too large; wanted %d or less, got %d", dsk.SectorsPerTrack(), sector))
+	}
+	offset := (track*dsk.SectorsPerTrack() + sector) * SectorSize
+	return dsk.bytes[offset:][:SectorSize]
 }
 
 /// Volume Table of Contents
@@ -177,14 +232,14 @@ func (dsk *Diskette) VTOCFile() string {
 	return sb.String()
 }
 
-func vtocOffset(size int64) uint {
-	const (
-		d13Size = 116480  // 13 sectors * 256 bytes * 35 tracks
-		d13VTOC = 0xdd00  // 13 sectors * 256 bytes * 17 tracks
-		dskSize = 143360  // 16 sectors * 256 bytes * 35 tracks
-		dskVTOC = 0x11000 // 16 sectors * 256 bytes * 17 tracks
-	)
+const (
+	d13Size = 116480  // 13 sectors * 256 bytes * 35 tracks
+	d13VTOC = 0xdd00  // 13 sectors * 256 bytes * 17 tracks
+	dskSize = 143360  // 16 sectors * 256 bytes * 35 tracks
+	dskVTOC = 0x11000 // 16 sectors * 256 bytes * 17 tracks
+)
 
+func vtocOffset(size int64) uint {
 	if size == d13Size {
 		return d13VTOC
 	}
@@ -339,8 +394,14 @@ type FileEntry []byte
 
 func (f FileEntry) IsEmpty() bool   { return f[0x00] == 0x00 }
 func (f FileEntry) IsDeleted() bool { return f[0x00] == 0xff }
-func (f FileEntry) IsLocked() bool  { return f[0x02]&0x80 != 0 }
-func (f FileEntry) Type() FileType  { return FileType(f[0x02] & 0x7f) }
+func (f FileEntry) firstTSList() (uint, uint) {
+	if f.IsDeleted() {
+		return uint(f[0x20]), uint(f[0x01])
+	}
+	return uint(f[0x00]), uint(f[0x01])
+}
+func (f FileEntry) IsLocked() bool { return f[0x02]&0x80 != 0 }
+func (f FileEntry) Type() FileType { return FileType(f[0x02] & 0x7f) }
 func (f FileEntry) Name() Filename {
 	const hiAsciiSpace = 0xA0
 	size := 30
@@ -477,6 +538,57 @@ $0C-0D Track and sector of first data sector or zeros
 $0E-0F Track and sector of second data sector or zeros
 $10-FF Up to 120 more track and sector pairs
 */
+type tsList []byte
+
+func (tsl tsList) NextTSList() (uint, uint) { return uint(tsl[0x01]), uint(tsl[0x02]) }
+func (tsl tsList) DataSectorOffsets() []uint {
+	return []uint{
+		0x0C, 0x0E, 0x10, 0x12, 0x14, 0x16, 0x18, 0x1A, 0x1C, 0x1E, 0x20, 0x22,
+		0x24, 0x26, 0x28, 0x2A, 0x2C, 0x2E, 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A,
+		0x3C, 0x3E, 0x40, 0x42, 0x44, 0x46, 0x48, 0x4A, 0x4C, 0x4E, 0x50, 0x52,
+		0x54, 0x56, 0x58, 0x5A, 0x5C, 0x5E, 0x60, 0x62, 0x64, 0x66, 0x68, 0x6A,
+		0x6C, 0x6E, 0x70, 0x72, 0x74, 0x76, 0x78, 0x7A, 0x7C, 0x7E, 0x80, 0x82,
+		0x84, 0x86, 0x88, 0x8A, 0x8C, 0x8E, 0x90, 0x92, 0x94, 0x96, 0x98, 0x9A,
+		0x9C, 0x9E, 0xA0, 0xA2, 0xA4, 0xA6, 0xA8, 0xAA, 0xAC, 0xAE, 0xB0, 0xB2,
+		0xB4, 0xB6, 0xB8, 0xBA, 0xBC, 0xBE, 0xC0, 0xC2, 0xC4, 0xC6, 0xC8, 0xCA,
+		0xCC, 0xCE, 0xD0, 0xD2, 0xD4, 0xD6, 0xD8, 0xDA, 0xDC, 0xDE, 0xE0, 0xE2,
+		0xE4, 0xE6, 0xE8, 0xEA, 0xEC, 0xEE, 0xF0, 0xF2, 0xF4, 0xF6, 0xF8, 0xFA,
+		0xFC, 0xFE}
+}
+func (tsl tsList) DataSectorTS(offset uint) (uint, uint) {
+	if !slices.Contains(tsl.DataSectorOffsets(), offset) {
+		panic(fmt.Errorf("DataSectorTS offset is out of range: %d ∉ {0x0C,0x0E,...,0xFE}", offset))
+	}
+	return uint(tsl[offset]), uint(tsl[offset+1])
+}
+
+// DataSectors traverses the Track/Sector Lists and returns all sectors used by
+// file for data.
+func (dsk *Diskette) DataSectors(file FileEntry) (datas [][]byte) {
+	t, s := file.firstTSList()
+	fmt.Fprintf(os.Stderr, "\n\n%s - tsList track=%.2x sector=%.2x\n", file.Name().PathSafe(), t, s)
+
+	for t != 0 {
+		tsList := tsList(dsk.rawSector(t, s))
+		// fmt.Fprintf(os.Stderr, "%s - tsList track=%.2x sector=%.2x\n", file.Name().PathSafe(), t, s)
+
+		for _, offset := range tsList.DataSectorOffsets() {
+			dt, ds := tsList.DataSectorTS(offset)
+			fmt.Fprintf(os.Stderr, "%s -        track=%.2x sector=%.2x\n", file.Name().PathSafe(), dt, ds)
+			if dt == 0 {
+				// TODO: handle case of a non-sequential ("random") file that can have
+				// non-allocated data sectors. See "Beneath Apple DOS" Chapter 4.
+				break
+			}
+			dataSector := dsk.rawSector(dt, ds)
+			datas = append(datas, dataSector)
+		}
+
+		t, s = tsList.NextTSList()
+	}
+
+	return
+}
 
 /// Helper functions
 
