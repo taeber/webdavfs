@@ -22,7 +22,7 @@ type specialName = string
 func snReadme() specialName                 { return "README.txt" }
 func snDos() specialName                    { return "_dos" }
 func snCatalog() specialName                { return "_catalog.txt" }
-func snLock(filename string) specialName    { return fmt.Sprintf("_%s.lock", filename) }
+func snLock(filename string) specialName    { return fmt.Sprintf("%s,locked", filename) }
 func snDeleted(filename string) specialName { return fmt.Sprintf("_%s.garbage", filename) }
 
 // ListenAndServe starts a new WebDAV server at http://{addr}{prefix} with each
@@ -277,41 +277,51 @@ func (dir *dskDir) Children() map[string]fileWrapper {
 		} else if file.IsLocked() {
 			kids[snLock(name)] = newMemFile(snLock(name), "", dir.dsk.ModTime())
 		}
-		// kids[name] = newMemFile(name, "TODO: dskFile", dir.dsk.ModTime())
 		kids[name] = &dskFile{dsk: dir.dsk, file: file}
 	}
 
 	return kids
 }
 
+// dskFile is a raw (binary) representation of a file on diskette.
 type dskFile struct {
 	anyFile
-	dsk  *dsk.Diskette
-	file dsk.FileEntry
+	dsk     *dsk.Diskette
+	file    dsk.FileEntry
+	content *bytes.Reader
 }
 
-func (f *dskFile) Open() (webdav.File, error) {
-	buf, err := f.dsk.ReadAll(f.file)
-	if errors.Is(err, errors.ErrUnsupported) {
-		const todo = "TODO: handle reading this type"
-		return newMemFile(f.file.Name().PathSafe(), todo, f.dsk.ModTime()), nil
-	} else if err != nil {
-		return nil, err
+func (f *dskFile) Open() (webdav.File, error) { return f, nil }
+func (f *dskFile) Read(p []byte) (int, error) {
+	if err := f.load(); err != nil {
+		return 0, err
 	}
-
-	return &memFile{
-		name:    f.file.Name().PathSafe(),
-		modTime: f.dsk.ModTime(),
-		content: bytes.NewReader(buf),
-	}, nil
+	return f.content.Read(p)
 }
-
+func (f *dskFile) Seek(offset int64, whence int) (int64, error) {
+	if err := f.load(); err != nil {
+		return 0, err
+	}
+	return f.content.Seek(offset, whence)
+}
+func (*dskFile) Write([]byte) (int, error) { return 0, os.ErrInvalid }
 func (f *dskFile) Stat() (fs.FileInfo, error) {
 	return &fileInfo{
 		name:    f.file.Name().PathSafe(),
 		size:    int64(f.file.SectorsUsed() * dsk.SectorSize),
 		modTime: f.dsk.ModTime(),
 	}, nil
+}
+
+func (f *dskFile) load() error {
+	if f.content == nil {
+		buf, err := f.dsk.ReadAll(f.file)
+		if err != nil {
+			return err
+		}
+		f.content = bytes.NewReader(buf)
+	}
+	return nil
 }
 
 // memFile is an in-memory file.
