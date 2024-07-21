@@ -52,18 +52,11 @@ func ListenAndServe(addr, prefix string, disks ...string) error {
 	return http.ListenAndServe(addr, &handler)
 }
 
-/// dos33FS
-
+// dos33FS is the [webdav.FileSystem] implementation for DOS 3.3 Diskettes.
 type dos33FS struct {
 	created time.Time
 	disks   []*dsk.Diskette
-	//	type FileSystem interface {
-	//		Mkdir(ctx context.Context, name string, perm os.FileMode) error
-	//		OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (File, error)
-	//		RemoveAll(ctx context.Context, name string) error
-	//		Rename(ctx context.Context, oldName, newName string) error
-	//		Stat(ctx context.Context, name string) (os.FileInfo, error)
-	//	}
+	// type [webdav.FileSystem] interface
 }
 
 func (dfs *dos33FS) OpenFile(_ context.Context, name string, _ int, _ fs.FileMode) (webdav.File, error) {
@@ -147,22 +140,6 @@ func readDir(file fileWrapper) ([]fs.FileInfo, error) {
 
 	return children, nil
 }
-
-/*
-	type webdav.File interface {
-	  http.File
-	    io.Closer
-	      Close() error
-	    io.Reader
-	      Read(p []byte) (int, error)
-	    io.Seeker
-	      Seek(offset int64, whence int) (int64, error)
-	    Readdir(count int) ([]fs.FileInfo, error)
-	    Stat() (fs.FileInfo, error)
-	  io.Writer
-	    Write(p []byte) (int, error)
-	}
-*/
 
 // fileInfo is the simplest implementation of [fs.FileInfo].
 type fileInfo struct {

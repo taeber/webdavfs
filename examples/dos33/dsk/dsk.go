@@ -240,15 +240,14 @@ const (
 )
 
 func vtocOffset(size int64) uint {
-	if size == d13Size {
+	switch size {
+	case d13Size:
 		return d13VTOC
-	}
-
-	if size == dskSize {
+	case dskSize:
 		return dskVTOC
+	default:
+		panic(fmt.Errorf("vtocOffset: unexpected disk size; wanted %d or %d, got %d bytes", d13Size, dskSize, size))
 	}
-
-	panic(fmt.Errorf("vtocOffset: unexpected disk size; wanted %d or %d, got %d bytes", d13Size, dskSize, size))
 }
 
 /// Catalog
@@ -301,36 +300,6 @@ func (dsk *Diskette) Catalog() (entries []FileEntry) {
 	}
 
 	return
-}
-
-// writeFileNameln writes out filename to sb, including correctly handling
-// INVERSE'd filenames allowable on Apple DOS by using ASCII escape codes.
-func writeFileName(sb *strings.Builder, filename string) {
-	const (
-		escCodeReset   = "\033[0m"
-		escCodeInverse = "\033[47;30m"
-	)
-
-	inverted := false
-	for _, ch := range filename {
-		if ch&0x60 == 0 {
-			if !inverted {
-				sb.WriteString(escCodeInverse)
-			}
-			inverted = true
-			sb.WriteRune(ch | 0x40)
-		} else {
-			if inverted {
-				sb.WriteString(escCodeReset)
-			}
-			inverted = false
-			sb.WriteRune(ch)
-		}
-	}
-
-	if inverted {
-		sb.WriteString(escCodeReset)
-	}
 }
 
 func RunCatalog(dsk *Diskette) string {
