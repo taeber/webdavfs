@@ -13,9 +13,6 @@ import (
 	"time"
 )
 
-// SectorSize is the number of bytes in a DOS sector.
-const SectorSize = 256
-
 // Diskette represents an Apple DOS 3.3 formatted disk image.
 type Diskette struct {
 	hostFile *os.File
@@ -28,6 +25,7 @@ type Diskette struct {
 
 func (dsk *Diskette) Name() string          { return dsk.name }
 func (dsk *Diskette) NumTracks() uint       { return uint(dsk.vtoc[0x34]) }
+func (dsk *Diskette) SectorSize() uint16    { return word(dsk.vtoc[0x36:]) }
 func (dsk *Diskette) SectorsPerTrack() uint { return uint(dsk.vtoc[0x35]) }
 func (dsk *Diskette) Volume() uint          { return uint(dsk.vtoc[0x06]) }
 
@@ -51,7 +49,7 @@ func (dsk *Diskette) ReadAll(file FileEntry) ([]byte, error) {
 		panic("ReadAll: switch is non-exhaustive")
 	}
 
-	cap := file.SectorsUsed() * SectorSize
+	cap := file.SectorsUsed() * dsk.SectorSize()
 	p := make([]byte, 0, cap)
 	buf := bytes.NewBuffer(p)
 
@@ -127,8 +125,8 @@ func (dsk *Diskette) rawSector(track, sector uint) []byte {
 	} else if sector > dsk.SectorsPerTrack() {
 		panic(fmt.Errorf("rawSector: sector is too large; wanted %d or less, got %d", dsk.SectorsPerTrack(), sector))
 	}
-	offset := (track*dsk.SectorsPerTrack() + sector) * SectorSize
-	return dsk.bytes[offset:][:SectorSize]
+	offset := (track*dsk.SectorsPerTrack() + sector) * uint(dsk.SectorSize())
+	return dsk.bytes[offset:][:dsk.SectorSize()]
 }
 
 /// Volume Table of Contents

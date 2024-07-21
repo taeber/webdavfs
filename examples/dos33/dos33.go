@@ -288,7 +288,7 @@ func (*dskFile) Write([]byte) (int, error) { return 0, os.ErrInvalid }
 func (f *dskFile) Stat() (fs.FileInfo, error) {
 	return &fileInfo{
 		name:    f.file.Name().PathSafe(),
-		size:    int64(f.file.SectorsUsed() * dsk.SectorSize),
+		size:    int64(f.file.SectorsUsed() * f.dsk.SectorSize()),
 		modTime: f.dsk.ModTime(),
 	}, nil
 }
