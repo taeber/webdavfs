@@ -18,20 +18,27 @@ const SectorSize = 256
 
 // Diskette represents an Apple DOS 3.3 formatted disk image.
 type Diskette struct {
+	hostFile *os.File
 	path     string // Path on host
 	name     string
 	bytes    []byte
-	modTime  time.Time
-	size     int64
 	readonly bool
 	vtoc     []byte
 }
 
 func (dsk *Diskette) Name() string          { return dsk.name }
-func (dsk *Diskette) ModTime() time.Time    { return dsk.modTime }
 func (dsk *Diskette) NumTracks() uint       { return uint(dsk.vtoc[0x34]) }
 func (dsk *Diskette) SectorsPerTrack() uint { return uint(dsk.vtoc[0x35]) }
 func (dsk *Diskette) Volume() uint          { return uint(dsk.vtoc[0x06]) }
+
+func (dsk *Diskette) ModTime() time.Time {
+	fi, err := dsk.hostFile.Stat()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stat err %v\n", err)
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
 
 func (dsk *Diskette) ReadAll(file FileEntry) ([]byte, error) {
 	readHeader := false
@@ -105,11 +112,10 @@ func LoadDiskette(path string) (*Diskette, error) {
 	ext := filepath.Ext(name)
 
 	return &Diskette{
+		hostFile: file,
 		path:     path,
 		name:     name[:len(name)-len(ext)],
 		readonly: readonly,
-		size:     fi.Size(),
-		modTime:  fi.ModTime(),
 		bytes:    buf,
 		vtoc:     buf[vtocOffset(size):],
 	}, nil
@@ -232,14 +238,17 @@ func (dsk *Diskette) VTOCFile() string {
 	return sb.String()
 }
 
-const (
-	d13Size = 116480  // 13 sectors * 256 bytes * 35 tracks
-	d13VTOC = 0xdd00  // 13 sectors * 256 bytes * 17 tracks
-	dskSize = 143360  // 16 sectors * 256 bytes * 35 tracks
-	dskVTOC = 0x11000 // 16 sectors * 256 bytes * 17 tracks
-)
-
+// vtocOffset returns the offset based on the size of disk.
+// The VTOC sector is always Track 17, Sector 0.
 func vtocOffset(size int64) uint {
+	const (
+		d13Size = 116480 // 13 sectors * 256 bytes * 35 tracks = 116480
+		dskSize = 143360 // 16 sectors * 256 bytes * 35 tracks = 143360
+
+		d13VTOC = 0x0DD00 // 13 sectors * 256 bytes * 17 tracks
+		dskVTOC = 0x11000 // 16 sectors * 256 bytes * 17 tracks
+	)
+
 	switch size {
 	case d13Size:
 		return d13VTOC
