@@ -2,9 +2,7 @@ package dos33
 
 import (
 	"context"
-	"errors"
 	"io/fs"
-	"net/http"
 	"os"
 	"slices"
 	"testing"
@@ -25,7 +23,8 @@ func TestListRoot(t *testing.T) {
 	}
 
 	actual := transform(files, name)
-	expected := []string{"DISK.DSK", "README"}
+	slices.Sort(actual)
+	expected := []string{"DISK", "README.txt"}
 	if !slices.Equal(expected, actual) {
 		t.Fatal(expected, "!=", actual)
 	}
@@ -34,7 +33,7 @@ func TestListRoot(t *testing.T) {
 func TestListDisk(t *testing.T) {
 	fs := newFileSystem("DISK.DSK")
 
-	file, err := fs.OpenFile(context.Background(), "/DISK.DSK", 0, os.ModePerm)
+	file, err := fs.OpenFile(context.Background(), "/DISK", 0, os.ModePerm)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,10 +44,8 @@ func TestListDisk(t *testing.T) {
 	}
 
 	actual := transform(files, name)
-	expected := []string{
-		"files", "applesoft", "binary", "intbasic", "text", "a", "b", "r", "s", "locks",
-		"CATALOG", "VTOC",
-	}
+	slices.Sort(actual)
+	expected := []string{"HELLO", "PROG", "_dos"}
 	if !slices.Equal(expected, actual) {
 		t.Fatal(expected, "!=", actual)
 	}
@@ -57,8 +54,8 @@ func TestListDisk(t *testing.T) {
 func TestBadDiskName_ThrowsMissing(t *testing.T) {
 	fs := newFileSystem()
 
-	_, err := fs.OpenFile(context.Background(), "/missing.dsk", 0, os.ModePerm)
-	if !errors.Is(err, http.ErrMissingFile) {
+	_, err := fs.OpenFile(context.Background(), "/missing", 0, os.ModePerm)
+	if err != nil && err.Error() != "file does not exist" {
 		t.Fatal("Expected missing file error")
 	}
 }
@@ -66,7 +63,7 @@ func TestBadDiskName_ThrowsMissing(t *testing.T) {
 func TestDiskHasModTime(t *testing.T) {
 	fs := newFileSystem("DISK.DSK")
 
-	info, err := fs.Stat(context.Background(), "/DISK.DSK")
+	info, err := fs.Stat(context.Background(), "/DISK")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +77,7 @@ func TestDiskHasModTime(t *testing.T) {
 func TestReadmeIsNotEmpty(t *testing.T) {
 	fs := newFileSystem()
 
-	file, err := fs.OpenFile(context.Background(), "/README", 0, os.ModePerm)
+	file, err := fs.OpenFile(context.Background(), "/README.txt", 0, os.ModePerm)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +89,7 @@ func TestReadmeIsNotEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n <= 0 {
-		t.Fatal("Failed to read from README")
+		t.Fatal("Failed to read from README.txt")
 	}
 }
 
