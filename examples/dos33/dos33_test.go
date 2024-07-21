@@ -97,3 +97,12 @@ func TestReadmeIsNotEmpty(t *testing.T) {
 }
 
 func name(info fs.FileInfo) string { return info.Name() }
+
+// transform maps items from type T to result type R using fn.
+func transform[T, R any](items []T, fn func(T) R) []R {
+	mapped := make([]R, 0, len(items))
+	for _, item := range items {
+		mapped = append(mapped, fn(item))
+	}
+	return mapped
+}

@@ -254,7 +254,8 @@ func (dir *dskDir) Children() map[string]fileWrapper {
 		name := file.Name().PathSafe()
 		if file.IsDeleted() {
 			name = snDeleted(name)
-		} else if file.IsLocked() {
+		}
+		if file.IsLocked() {
 			kids[snLock(name)] = newMemFile(snLock(name), "", dir.dsk.ModTime())
 		}
 		kids[name] = &dskFile{dsk: dir.dsk, file: file}
@@ -286,8 +287,12 @@ func (f *dskFile) Seek(offset int64, whence int) (int64, error) {
 }
 func (*dskFile) Write([]byte) (int, error) { return 0, os.ErrInvalid }
 func (f *dskFile) Stat() (fs.FileInfo, error) {
+	name := f.file.Name().PathSafe()
+	if f.file.IsDeleted() {
+		name = snDeleted(name)
+	}
 	return &fileInfo{
-		name:    f.file.Name().PathSafe(),
+		name:    name,
 		size:    int64(f.file.SectorsUsed() * f.dsk.SectorSize()),
 		modTime: f.dsk.ModTime(),
 	}, nil
