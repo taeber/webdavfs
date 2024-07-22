@@ -355,6 +355,20 @@ func (dsk *Diskette) Catalog() (entries []FileEntry) {
 	return
 }
 
+func (dsk *Diskette) FindFile(filename string) FileEntry {
+	for _, entry := range dsk.Catalog() {
+		if entry.Name().String() == filename {
+			return entry
+		}
+	}
+	for _, entry := range dsk.Catalog() {
+		if entry.Name().ANSIEscaped() == filename {
+			return entry
+		}
+	}
+	return nil
+}
+
 func RunCatalog(dsk *Diskette) string {
 	sb := strings.Builder{}
 

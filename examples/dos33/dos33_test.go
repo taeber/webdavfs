@@ -2,6 +2,7 @@ package dos33
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"slices"
@@ -55,7 +56,7 @@ func TestBadDiskName_ThrowsMissing(t *testing.T) {
 	fs := newFileSystem()
 
 	_, err := fs.OpenFile(context.Background(), "/missing", 0, os.ModePerm)
-	if err != nil && err.Error() != "file does not exist" {
+	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("Expected missing file error")
 	}
 }

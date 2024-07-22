@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -25,6 +26,14 @@ func snCatalog() specialName                { return "CATALOG.txt" }
 func snVtoc() specialName                   { return "VTOC.txt" }
 func snLock(filename string) specialName    { return fmt.Sprintf("%s,locked", filename) }
 func snDeleted(filename string) specialName { return fmt.Sprintf("_%s.garbage", filename) }
+func parseLockName(lockfile string) (string, bool) {
+	name := strings.TrimSuffix(lockfile, ",locked")
+	if name != lockfile {
+		return name, true
+	} else {
+		return "", false
+	}
+}
 
 // ListenAndServe starts a new WebDAV server at http://{addr}{prefix} with each
 // of the disks exposing the DOS 3.3 DSK filesystem.
@@ -61,9 +70,13 @@ type dos33FS struct {
 }
 
 func (dfs *dos33FS) OpenFile(_ context.Context, name string, _ int, mode fs.FileMode) (webdav.File, error) {
+	writePerms := mode.Perm()&0222 != 0
 	root := &rootDir{dfs: dfs}
 	name = strings.TrimLeft(name, "/")
-	if file, err := walk(root, name); err != nil {
+	file, basedir, err := walk(root, name)
+	if errors.Is(err, os.ErrNotExist) && basedir != nil && writePerms {
+		return basedir.Create(path.Base(name))
+	} else if err != nil {
 		return nil, err
 	} else {
 		return file.Open()
@@ -73,16 +86,16 @@ func (dfs *dos33FS) OpenFile(_ context.Context, name string, _ int, mode fs.File
 func (dfs *dos33FS) Stat(_ context.Context, name string) (fs.FileInfo, error) {
 	root := &rootDir{dfs: dfs}
 	name = strings.TrimLeft(name, "/")
-	if file, err := walk(root, name); err != nil {
+	if file, _, err := walk(root, name); err != nil {
 		return nil, err
 	} else {
 		return file.Stat()
 	}
 }
 
-func walk(parent fileWrapper, pathname string) (fileWrapper, error) {
+func walk(parent fileWrapper, pathname string) (file, prev fileWrapper, err error) {
 	if pathname == "" {
-		return parent, nil
+		return parent, nil, nil
 	}
 
 	split := strings.SplitN(pathname, "/", 2)
@@ -90,31 +103,26 @@ func walk(parent fileWrapper, pathname string) (fileWrapper, error) {
 
 	child, found := parent.Children()[name]
 	if !found {
-		return nil, os.ErrNotExist
+		return nil, parent, os.ErrNotExist
 	}
 	if len(split) == 1 {
-		return child, nil
+		return child, parent, nil
 	}
 	if child.IsDir() {
 		return walk(child, split[1])
 	}
-	return nil, os.ErrInvalid // child is not a directory
+	return nil, parent, os.ErrInvalid // child is not a directory
 }
 
 func (*dos33FS) Mkdir(context.Context, string, fs.FileMode) error { return errors.ErrUnsupported }
 func (*dos33FS) Rename(context.Context, string, string) error     { return errors.ErrUnsupported }
-func (dfs *dos33FS) RemoveAll(ctx context.Context, name string) error {
-	if !strings.HasSuffix(name, snLock("")) {
-		return errors.ErrUnsupported
-	}
-	// Unlocking FILE
-	// name="/Apple DOS 3.1 Master/RAWDOS,locked"
+func (dfs *dos33FS) RemoveAll(_ context.Context, name string) error {
 	root := &rootDir{dfs: dfs}
 	name = strings.TrimLeft(name, "/")
-	if file, err := walk(root, name); err != nil {
+	if file, _, err := walk(root, name); err != nil {
 		return err
 	} else {
-		return file.SetLock(false)
+		return file.Delete()
 	}
 }
 
@@ -136,10 +144,12 @@ func newFileSystem(disks ...string) *dos33FS {
 type fileWrapper interface {
 	Open() (webdav.File, error)
 	Stat() (fs.FileInfo, error)
-	Children() map[string]fileWrapper
-	IsDir() bool
 
-	SetLock(bool) error
+	IsDir() bool
+	Children() map[string]fileWrapper
+	Create(string) (webdav.File, error)
+
+	Delete() error
 }
 
 func readDir(file fileWrapper) ([]fs.FileInfo, error) {
@@ -183,7 +193,7 @@ type anyDir struct{}
 
 // func (dir *anyDir) Open() (webdav.File, error)         { return dir, nil }
 // func (dir *anyDir) Readdir(int) ([]fs.FileInfo, error) { return readDir(dir) }
-func (*anyDir) SetLock(bool) error             { return errors.ErrUnsupported }
+func (*anyDir) Delete() error                  { return errors.ErrUnsupported }
 func (*anyDir) IsDir() bool                    { return true }
 func (*anyDir) Close() error                   { return nil }
 func (*anyDir) Read([]byte) (int, error)       { return -1, errors.ErrUnsupported }
@@ -197,6 +207,7 @@ func (*anyFile) IsDir() bool                        { return false }
 func (*anyFile) Close() error                       { return nil }
 func (*anyFile) Children() map[string]fileWrapper   { return nil }
 func (*anyFile) Readdir(int) ([]fs.FileInfo, error) { return nil, errors.ErrUnsupported }
+func (*anyFile) Create(string) (webdav.File, error) { return nil, errors.ErrUnsupported }
 
 // rootDir is
 type rootDir struct {
@@ -220,6 +231,7 @@ func (dir *rootDir) Children() map[string]fileWrapper {
 	}
 	return kids
 }
+func (*rootDir) Create(string) (webdav.File, error) { return nil, errors.ErrUnsupported }
 
 // memDir is an in-memory directory.
 type memDir struct {
@@ -239,6 +251,7 @@ func (dir *memDir) Stat() (fs.FileInfo, error) {
 	}, nil
 }
 func (dir *memDir) Children() map[string]fileWrapper { return dir.children }
+func (*memDir) Create(string) (webdav.File, error)   { return nil, errors.ErrUnsupported }
 
 // dskDir
 type dskDir struct {
@@ -279,6 +292,20 @@ func (dir *dskDir) Children() map[string]fileWrapper {
 
 	return kids
 }
+func (dir *dskDir) Create(name string) (webdav.File, error) {
+	if filename, ok := parseLockName(name); ok {
+		file := dir.dsk.FindFile(filename)
+		if file == nil {
+			return nil, errors.ErrUnsupported
+		}
+		if err := dir.dsk.Lock(file); err != nil {
+			return nil, err
+		}
+		lck := lockFile{dsk: dir.dsk, file: file}
+		return lck.Open()
+	}
+	return nil, errors.ErrUnsupported
+}
 
 // dskFile is a raw (binary) representation of a file on diskette.
 type dskFile struct {
@@ -301,7 +328,7 @@ func (f *dskFile) Seek(offset int64, whence int) (int64, error) {
 	}
 	return f.content.Seek(offset, whence)
 }
-func (*dskFile) Write([]byte) (int, error) { return 0, os.ErrInvalid }
+func (*dskFile) Write([]byte) (int, error) { return 0, errors.ErrUnsupported }
 func (f *dskFile) Stat() (fs.FileInfo, error) {
 	name := f.file.Name().PathSafe()
 	if f.file.IsDeleted() {
@@ -313,7 +340,7 @@ func (f *dskFile) Stat() (fs.FileInfo, error) {
 		modTime: f.dsk.ModTime(),
 	}, nil
 }
-func (*dskFile) SetLock(bool) error { return errors.ErrUnsupported }
+func (*dskFile) Delete() error { return errors.ErrUnsupported }
 
 func (f *dskFile) load() error {
 	if f.content == nil {
@@ -335,10 +362,7 @@ type lockFile struct {
 func (lck *lockFile) Open() (webdav.File, error) {
 	return newMemFile(snLock(lck.file.Name().PathSafe()), "", lck.dsk.ModTime()), nil
 }
-func (lck *lockFile) SetLock(locking bool) error {
-	if locking {
-		return errors.ErrUnsupported
-	}
+func (lck *lockFile) Delete() error {
 	return lck.dsk.Unlock(lck.file)
 }
 func (lck *lockFile) Stat() (fs.FileInfo, error) {
@@ -373,9 +397,9 @@ func (f *memFile) Stat() (fs.FileInfo, error) {
 		modTime: f.modTime,
 	}, nil
 }
-func (*memFile) Write(p []byte) (int, error) { return 0, os.ErrInvalid }
+func (*memFile) Write(p []byte) (int, error) { return 0, errors.ErrUnsupported }
 
-func (*memFile) SetLock(bool) error { return errors.ErrUnsupported }
+func (*memFile) Delete() error { return errors.ErrUnsupported }
 
 func newMemFile(name, content string, modTime time.Time) *memFile {
 	return &memFile{
