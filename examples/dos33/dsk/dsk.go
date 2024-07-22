@@ -83,6 +83,30 @@ func (dsk *Diskette) ReadAll(file FileEntry) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func (dsk *Diskette) Lock(file FileEntry) error {
+	if dsk.readonly {
+		return os.ErrPermission
+	}
+	file.lock()
+	if err := dsk.save(); err != nil {
+		file.unlock()
+		return nil
+	}
+	return nil
+}
+
+func (dsk *Diskette) Unlock(file FileEntry) error {
+	if dsk.readonly {
+		return os.ErrPermission
+	}
+	file.unlock()
+	if err := dsk.save(); err != nil {
+		file.lock()
+		return nil
+	}
+	return nil
+}
+
 // LoadDiskette reads the disk image at path.
 func LoadDiskette(path string) (*Diskette, error) {
 	file, err, readonly := tryOpenFileRW(path)
@@ -117,6 +141,28 @@ func LoadDiskette(path string) (*Diskette, error) {
 		bytes:    buf,
 		vtoc:     buf[vtocOffset(size):],
 	}, nil
+}
+
+func (dsk *Diskette) save() error {
+	if dsk.readonly {
+		return os.ErrPermission
+	}
+
+	fi, err := dsk.hostFile.Stat()
+	if err != nil {
+		return err
+	}
+
+	size := int(fi.Size())
+
+	if n, err := dsk.hostFile.WriteAt(dsk.bytes, 0); err != nil {
+		if !errors.Is(err, io.EOF) {
+			return err
+		}
+	} else if n != size {
+		return fmt.Errorf("failed to write all bytes of %s; wanted %d, got %d", dsk.path, size, n)
+	}
+	return nil
 }
 
 func (dsk *Diskette) rawSector(track, sector uint) []byte {
@@ -390,6 +436,11 @@ func (f FileEntry) Name() Filename {
 	return Filename(f[0x03:][:size])
 }
 func (f FileEntry) SectorsUsed() uint16 { return word(f[0x21:0x23]) }
+
+const lockBits uint8 = 0b1000_0000
+
+func (f FileEntry) lock()   { f[0x02] |= lockBits }
+func (f FileEntry) unlock() { f[0x02] &= ^lockBits }
 
 // Filename is the name of a DOS 3.3 file.
 //
