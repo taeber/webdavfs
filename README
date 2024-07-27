@@ -11,6 +11,7 @@ Benefits
 TODO
 ----
 
+```
 [ ] Retro - DOS3.3 DSK fs - expose both TEXT and BINARY version of files
 [ ] Layering - create a caching fs by having it call an fs with a 200ms delay
     per op and show performance improvement
@@ -19,53 +20,53 @@ TODO
     /photos/2024/05/27/IMG_1234.HEIC
     /photos/people/Doe_John/IMG_1234.HEIC
     ^^ all the same file!
+```
 
 
 DOS 3.3 DSK Filesystem
 -----------------------
 
-## TODO
-
-[x] Definitely need to implement my own FileSystem, but I should use file.go's
-    memFS for inspiration, especially creating a new memFile per OpenFile req.
-[ ] VTOC
-[ ] CATALOG
-[ ] Would be cool to generate index.html on the fly. Not listed, but if asked for. (Or redirected?)
-    [ ] Add WebDAV client in HTML?
-    [ ] Add Chris's TS emulator builtin!
-
-
-
 ```
-$ go run examples/dos33 DISK.DSK
+$ go run ./examples/dos33/cli DISK.DSK
 Serving DOS 3.3 DSK filesystem over WebDAV
   Address: http://127.0.0.1:33333/dos33
+           http://127.0.0.1:33333/dos33/DISK/
 
-$ ls -l /Volumes/dos33  # WebDAV mounted here
-README
-DISK.DSK/
+```
 
-$ head -3 /Volumes/dos33/README
+On macOS, you can "Connect to Server" in Finder or use `mount_webdav` in Terminal.
+
+```
+$ mkdir dos33
+$ mount_webdav -v dos33 http://127.0.0.1:33333/dos33 dos33
+
+$ ls -l dos33  # WebDAV mounted here
+README.txt
+DISK/
+
+$ head -3 dos33/README.txt
 DOS 3.3 DSK Filesystem Folder Structure
 
-Each DSK is represented as a folder with the following files and folders.
+Each DSK is represented as a folder containing all the files on it.
 
-$ cd /Volumes/dos33/DISK.DSK
+$ cd dos33/DISK/
 $ ls -1
-files/
-CATALOG
-applesoft/
-binary/
-intbasic/
-text/
-a/
-b/
-r/
-s/
-locks/   # Might be unnecessary
-VTOC
+HELLO
+APPLESOFT
+APPLESOFT,locked
+ANIMALS
+COLOR DEMOS
+MASTER.CREATE
+MASTER.CREATE,locked
+RAWDOS
+RAWDOS,locked
+COPY
+COPY,locked
+COPY.OBJ
+COPY.OBJ,locked
+_GIRL2.garbage
 
-$ cat CATALOG
+$ cat _dos/CATALOG.txt
 
 DISK VOLUME 254
 
@@ -78,52 +79,34 @@ DISK VOLUME 254
 *I 007 COPY
 *B 007 COPY.OBJ
 
-
-$ ls -1 files/
-HELLO
-APPLESOFT
-ANIMALS
-COLOR DEMOS
-MASTER.CREATE
-RAWDOS
-COPY
-COPY.OBJ
-
-$ ls -1 applesoft/
-
-$ ls -1 intbasic/
-HELLO
-APPLESOFT
-ANIMALS
-COLOR DEMOS
-MASTER.CREATE
-COPY
-
-$ hexdump -C files/HELLO | head -2  # files/ contains raw binary
+$ hexdump -C HELLO | head -2  # files/ contains raw binary
 00000000  01 a5 27 c9 09 d0 18 a5  2b 4a 4a 4a 4a 09 c0 85  |..'.....+JJJJ...|
 00000010  3f a9 5c 85 3e 18 ad fe  08 6d ff 08 8d fe 08 ae  |?.\.>....m......|
 
-$ cat intbasic/HELLO
+$ cat _dos/intbasic/HELLO
 10  PRINT "HI"
 20  GOTO 10
 
-$ ls -1 locks/
-APPLESOFT
-MASTER.CREATE
-RAWDOS
-COPY
-COPY.OBJ
-
-$ touch locks/HELLO
+$ touch HELLO,locked
 $ ls -1 locks/
 HELLO
+HELLO,locked
 APPLESOFT
+APPLESOFT,locked
+ANIMALS
+COLOR DEMOS
 MASTER.CREATE
+MASTER.CREATE,locked
 RAWDOS
+RAWDOS,locked
 COPY
+COPY,locked
 COPY.OBJ
+COPY.OBJ,locked
+_GIRL2.garbage
 
-$ cat CATALOG
+
+$ cat _dos/CATALOG.txt
 
 DISK VOLUME 254
 
