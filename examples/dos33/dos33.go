@@ -414,27 +414,31 @@ func newMemFile(name, content string, modTime time.Time) *memFile {
 // Contents of README.txt.
 const readme = `DOS 3.3 DSK Filesystem Folder Structure
 
-TODO: update with new structure
+Each DSK is represented as a folder containing all the files on it.
 
-Each DSK is represented as a folder with the following files and folders.
+**Locks**
 
-  files/      Read-only versions of all files, as raw binary.
-  CATALOG     a close approximation of running CATLOG from DOS.
-  locks/      All locked files. Lock a file by adding it, unlock by deleting it.
-  VTOC        Volume Table of Contents information that might be helpful.
+There are also lock files (ending in ",locked") which represent the lock
+state of the file.
+You can delete the lock to unlock a file.
+You can create a lock to lock a file.
 
-You can edit and create files by type under these folders:
-  applesoft/
-  intbasic/
-  binary/
-  text/
-  a/
-  b/
-  r/
-  s/
+**Garbage Files**
 
-For the following "text" folders, the appropriate conversion takes place:
-  applesoft/
-  intbasic/
-  text/
+Files that have been deleted can be viewed as well.
+They start with an underscore and end with ".garbage".
+
+**_dos/**
+
+The _dos directory contains special files and folders.
+
+  CATALOG.txt  a close approximation of running CATLOG from DOS.
+  VTOC.txt     Volume Table of Contents information that might be helpful.
+
+In the future, there will be special "text" folders, for view BASIC and TEXT
+files as regular text. Conversion will happen automatically on load and save!
+
+  _dos/applesoft/
+  _dos/intbasic/
+  _dos/text/
 `
