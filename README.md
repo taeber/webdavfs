@@ -26,6 +26,7 @@ TODO
 DOS 3.3 DSK Filesystem
 -----------------------
 
+
 ```
 $ go run ./examples/dos33/cli DISK.DSK
 Serving DOS 3.3 DSK filesystem over WebDAV
@@ -34,7 +35,11 @@ Serving DOS 3.3 DSK filesystem over WebDAV
 
 ```
 
-On macOS, you can "Connect to Server" in Finder or use `mount_webdav` in Terminal.
+On macOS, you can "Connect to Server" in Finder.
+
+![Screenshot](screenshot.png)
+
+Or, in Terminal, use `mount_webdav`.
 
 ```
 $ mkdir dos33
