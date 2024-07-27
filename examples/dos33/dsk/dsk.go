@@ -83,6 +83,18 @@ func (dsk *Diskette) ReadAll(file FileEntry) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func (dsk *Diskette) Delete(file FileEntry) error {
+	if dsk.readonly || file.IsDeleted() || file.IsLocked() {
+		return os.ErrPermission
+	}
+	prev20 := file.delete()
+	if err := dsk.save(); err != nil {
+		file.undelete(prev20)
+		return err
+	}
+	return nil
+}
+
 func (dsk *Diskette) Lock(file FileEntry) error {
 	if dsk.readonly {
 		return os.ErrPermission
@@ -90,7 +102,7 @@ func (dsk *Diskette) Lock(file FileEntry) error {
 	file.lock()
 	if err := dsk.save(); err != nil {
 		file.unlock()
-		return nil
+		return err
 	}
 	return nil
 }
@@ -455,6 +467,17 @@ const lockBits uint8 = 0b1000_0000
 
 func (f FileEntry) lock()   { f[0x02] |= lockBits }
 func (f FileEntry) unlock() { f[0x02] &= ^lockBits }
+
+func (f FileEntry) delete() byte {
+	prev20 := f[0x20]
+	f[0x20] = f[0x00]
+	f[0x00] = 0xff
+	return prev20
+}
+func (f FileEntry) undelete(prev20 byte) {
+	f[0x00] = f[0x20]
+	f[0x20] = prev20
+}
 
 // Filename is the name of a DOS 3.3 file.
 //

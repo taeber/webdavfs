@@ -340,7 +340,9 @@ func (f *dskFile) Stat() (fs.FileInfo, error) {
 		modTime: f.dsk.ModTime(),
 	}, nil
 }
-func (*dskFile) Delete() error { return errors.ErrUnsupported }
+func (f *dskFile) Delete() error {
+	return f.dsk.Delete(f.file)
+}
 
 func (f *dskFile) load() error {
 	if f.content == nil {
