@@ -70,6 +70,7 @@ COPY,locked
 COPY.OBJ
 COPY.OBJ,locked
 _GIRL2.garbage
+_dos/
 
 $ cat _dos/CATALOG.txt
 
@@ -93,7 +94,7 @@ $ cat _dos/intbasic/HELLO
 20  GOTO 10
 
 $ touch HELLO,locked
-$ ls -1 locks/
+$ ls -1
 HELLO
 HELLO,locked
 APPLESOFT
@@ -109,6 +110,7 @@ COPY,locked
 COPY.OBJ
 COPY.OBJ,locked
 _GIRL2.garbage
+_dos/
 
 
 $ cat _dos/CATALOG.txt
