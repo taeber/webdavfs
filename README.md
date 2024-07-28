@@ -22,6 +22,15 @@ TODO
     ^^ all the same file!
 ```
 
+TIPS
+----
+
+You can get a directory listing using cURL:
+
+```
+$ curl -XPROPFIND http://127.0.0.1:33333/hi --data-binary @req.xml | xmllint --format -
+```
+
 
 DOS 3.3 DSK Filesystem
 -----------------------
